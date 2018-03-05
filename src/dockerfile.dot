@@ -1,0 +1,7 @@
+FROM {{=it.buildImage}}
+
+ADD app /app
+ENV HOME=/app
+
+ADD entrypoint /entrypoint
+ENTRYPOINT ["/entrypoint"]

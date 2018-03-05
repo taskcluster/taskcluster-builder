@@ -1,0 +1,23 @@
+#!/bin/bash
+
+shopt -s nullglob
+cd /app
+for f in /app/.profile.d/*.sh; do
+  source $f
+done
+
+case "\${1}" in
+  {{~it.procs :proc}}
+  {{=proc.name}}) exec bash -c {{=proc.command}};;
+  {{~}}
+  *) exec "\${@}";;
+esac
+`.trim());
+const DOCKERFILE_TEMPLATE = doT.template(`
+FROM {{=it.buildImage}}
+
+ADD app /app
+ENV HOME=/app
+
+ADD entrypoint /entrypoint
+ENTRYPOINT ["/entrypoint"]

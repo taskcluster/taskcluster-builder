@@ -13,30 +13,8 @@ const Observable = require('zen-observable');
 const tar = require('tar-fs');
 
 doT.templateSettings.strip = false;
-const ENTRYPOINT_TEMPLATE = doT.template(`
-#!/bin/bash
-shopt -s nullglob
-cd /app
-for f in /app/.profile.d/*.sh; do
-  source $f
-done
-
-case "\${1}" in
-  {{~it.procs :proc}}
-  {{=proc.name}}) exec bash -c {{=proc.command}};;
-  {{~}}
-  *) exec "\${@}";;
-esac
-`.trim());
-const DOCKERFILE_TEMPLATE = doT.template(`
-FROM {{=it.buildImage}}
-
-ADD app /app
-ENV HOME=/app
-
-ADD entrypoint /entrypoint
-ENTRYPOINT ["/entrypoint"]
-`.trim());
+const ENTRYPOINT_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'entrypoint.dot')));
+const DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'dockerfile.dot')));
 
 module.exports = class Steps {
   constructor(service, cfg, lockInfo, context) {
