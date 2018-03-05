@@ -2,9 +2,9 @@ const program = require('commander');
 const {version} = require('../package.json');
 
 program.version(version);
-program.command('build <build-spec>')
-  .action((buildSpec) => {
-    require('./build')(buildSpec).then(
+program.command('build <build-spec> <release-file>')
+  .action((buildSpec, releaseFile) => {
+    require('./build')(buildSpec, releaseFile).then(
       () => {},
       err => {
         console.error(err);

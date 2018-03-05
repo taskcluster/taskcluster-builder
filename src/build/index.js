@@ -1,9 +1,9 @@
-const fs = require('fs');
-const config = require('typed-env-config');
 const ON_DEATH = require('death');
 const Listr = require('listr');
 const stringify = require('json-stable-stringify');
 const Steps = require('./build-steps');
+const {BuildSpec} = require('../formats/build-spec');
+const {Release} = require('../formats/release');
 
 // This is being used a shell trap
 const CLEAN_STEPS = [];
@@ -15,17 +15,13 @@ ON_DEATH((signal, err) => {
   process.exit(signal);
 });
 
-const main = async () => {
-  const cfg = config({
-    files: ['services.yml', 'user-config.yml'],
-    profile: 'default',
-  });
-  const lockFile = JSON.parse(fs.readFileSync('services.lock'));
-  const context = {};
+const main = async (specFile, releaseFile) => {
+  const spec = await BuildSpec.fromDirectory(specFile);
+  const release = Release.empty();
 
-  const imageBuilder = new Listr(
-    cfg.services.map(service => {
-      const steps = new Steps(service, cfg, lockFile[service.name], context);
+  const buildProcess = new Listr(
+    spec.services.map(service => {
+      const steps = new Steps(service, spec, release);
       CLEAN_STEPS.push(steps.cleanup);
       return {
         title: service.name,
@@ -42,6 +38,10 @@ const main = async () => {
           {
             title: 'Clone buildpack repo',
             task: () => steps.cloneBuildpack(),
+          },
+          {
+            title: 'Pull build image',
+            task: () => steps.pullBuildImage(),
           },
           {
             title: 'Detect',
@@ -66,11 +66,11 @@ const main = async () => {
         ])
       };
     }),
-    {concurrent: 1}
+    {concurrent: 1, debug: 1}
   );
 
-  await imageBuilder.run();
-  fs.writeFileSync('services.lock', stringify(context, {space: 4}));
+  await buildProcess.run();
+  release.write(releaseFile);
 };
 
 module.exports = main;

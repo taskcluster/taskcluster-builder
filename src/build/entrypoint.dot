@@ -12,12 +12,3 @@ case "\${1}" in
   {{~}}
   *) exec "\${@}";;
 esac
-`.trim());
-const DOCKERFILE_TEMPLATE = doT.template(`
-FROM {{=it.buildImage}}
-
-ADD app /app
-ENV HOME=/app
-
-ADD entrypoint /entrypoint
-ENTRYPOINT ["/entrypoint"]

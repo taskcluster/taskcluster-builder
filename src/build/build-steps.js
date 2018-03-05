@@ -6,23 +6,23 @@ const split = require('split');
 const rimraf = util.promisify(require('rimraf'));
 const git = require('simple-git/promise');
 const Docker = require('dockerode');
-const config = require('typed-env-config');;
 const doT = require('dot');
 const {quote} = require('shell-quote');
 const Observable = require('zen-observable');
 const tar = require('tar-fs');
+const yaml = require('js-yaml');
 
 doT.templateSettings.strip = false;
 const ENTRYPOINT_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'entrypoint.dot')));
 const DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'dockerfile.dot')));
 
 module.exports = class Steps {
-  constructor(service, cfg, lockInfo, context) {
+  constructor(service, buildSpec, release) {
     this.service = service;
-    this.cfg = cfg;
-    this.lockInfo = lockInfo;
-    this.context = Object.assign({}, this.lockInfo);
-    context[service.name] = this.context;
+    this.buildSpec = buildSpec;
+    this.service = service;
+    this.releaseService = {};
+    release.services[service.name] = this.releaseService;
     this.workDir = fs.mkdtempSync(path.join('/tmp', service.name + '-'));
     this.git = git(this.workDir);
     this.docker = new Docker();
@@ -34,6 +34,7 @@ module.exports = class Steps {
   }
 
   async shouldBuild() {
+    return false; // TODO
     const [source, ref] = this.service.source.split('#');
     const head = await this.git.listRemote([source, ref]);
     const gitSame = head.split(/\s+/)[0] === this.lockInfo.commit;
@@ -52,19 +53,36 @@ module.exports = class Steps {
     const [source, ref] = this.service.source.split('#');
     await this.git.clone(source, 'app', ['--depth=1', `-b${ref}`]);
     const commit = (await git(path.join(this.workDir, 'app')).revparse(['HEAD'])).trim();
-    this.context.commit = commit;
+    this.releaseService.source = `${source}#${commit}`;
   }
 
   async readConfig() {
-    const cfg = config({
-      files: [path.join(this.workDir, 'app', '.build-config.sh')],
-    }) || {};
-    this.buildConfig = Object.assign({}, this.buildConfig, cfg);
+    const configFile = path.join(this.workDir, 'app', '.build-config.yml');
+    if (fs.existsSync(configFile)) {
+      const config = yaml.safeLoad(configFile);
+			this.buildConfig = Object.assign({}, this.buildConfig, config);
+    }
   }
 
   async cloneBuildpack() {
     const [source, ref] = this.buildConfig.buildpack.split('#');
     await this.git.clone(source, 'buildpack', ['--depth=1', `-b${ref || 'master'}`]);
+  }
+
+  async pullBuildImage() {
+    this.buildImage = `heroku/${this.buildConfig.stack.replace('-', ':')}-build`;
+
+    const stream = await new Promise((resolve, reject) => {
+      this.docker.pull(this.buildImage, (err, stream) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(stream);
+      });
+    });
+
+    // TODO: this is kind of ugly
+    return stream.pipe(split(/\r?\n/, null, {trailing: false}));
   }
 
   /**
@@ -82,9 +100,7 @@ module.exports = class Steps {
     fs.mkdirSync(path.join(this.workDir, 'env'));
     fs.mkdirSync(path.join(this.workDir, 'slug'));
 
-    this.buildImage = `heroku/${this.buildConfig.stack.replace('-', ':')}-build`;
-
-    this.docker.run(
+    await this.docker.run(
       this.buildImage,
       ['workdir/buildpack/bin/detect', '/workdir/app'],
       output,
@@ -93,6 +109,7 @@ module.exports = class Steps {
         Binds: [`${this.workDir}:/workdir`],
       },
     );
+
     return output.pipe(split(/\r?\n/, null, {trailing: false}));
   }
 
@@ -114,7 +131,11 @@ module.exports = class Steps {
   }
 
   async entrypoint() {
-    const Procfile = fs.readFileSync(path.join(this.workDir, 'app', 'Procfile')).toString();
+    const procfilePath = path.join(this.workDir, 'app', 'Procfile');
+    if (!fs.existsSync(procfilePath)) {
+      throw new Error(`Service ${this.service.name} has no Procfile`);
+    }
+    const Procfile = fs.readFileSync(procfilePath).toString();
     const procs = Procfile.split('\n').map(line => {
       if (!line || line.startsWith('#')) {
         return null;
@@ -135,7 +156,8 @@ module.exports = class Steps {
     fs.writeFileSync(path.join(this.workDir, 'docker', 'Dockerfile'), dockerfile);
 
     const log = path.join(this.workDir, 'build.log');
-    const tag = `${this.cfg.docker.org}/${this.cfg.docker.prefix}${this.service.name}`;
+    const tag = `${this.buildSpec.docker.repositoryPrefix}${this.service.name}:${this.releaseService.sourceSha}`;
+    this.releaseService.dockerImage = tag; // TODO: need @sha256
     let context = await this.docker.buildImage(tar.pack(path.join(this.workDir, 'docker')), {t: tag});
     context.pipe(fs.createWriteStream(log));
     return new Observable(observer => {
@@ -146,11 +168,9 @@ module.exports = class Steps {
         observer.complete();
       };
       const onProgress = event => {
+        console.log(event);
         if (event.stream) {
           observer.next(event.stream);
-        } else if (event.aux) {
-          this.context.image = event.aux.ID.split(':')[1];
-          this.context.tag = tag;
         }
       };
       this.docker.modem.followProgress(context, onFinished, onProgress);
@@ -164,7 +184,7 @@ module.exports = class Steps {
       // around. We should remove them first.
       await this.docker.run(
         this.buildImage,
-        ['rm -rf /workdir/app /workdir/slug /workdir/cache /workdir/docker'],
+        ['rm', '-rf', '/workdir/app', '/workdir/slug', '/workdir/cache', '/workdir/docker'],
         log,
         {
           AutoRemove: true,
