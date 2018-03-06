@@ -3,7 +3,7 @@ const config = require('typed-env-config');
 const ON_DEATH = require('death');
 const Listr = require('listr');
 const stringify = require('json-stable-stringify');
-const Steps = require('./build_steps');
+const Steps = require('./build-steps');
 
 // This is being used a shell trap
 const CLEAN_STEPS = [];
@@ -73,4 +73,4 @@ const main = async () => {
   fs.writeFileSync('services.lock', stringify(context, {space: 4}));
 };
 
-main().catch(console.error);
+module.exports = main;

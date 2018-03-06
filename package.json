@@ -2,21 +2,17 @@
   "name": "taskcluster-installer",
   "version": "0.0.1",
   "author": "Brian Stack <bstack@mozilla.com>",
-  "description": "Build and deploy taskcluster clusters",
+  "description": "Build and deploy taskcluster instances",
   "license": "MPL-2.0",
-  "scripts": {
-    "images": "node src/build",
-    "release": "node src/release"
+  "bin": {
+    "taskcluster-installer": "./src/main.js"
   },
-  "files": [
-    "lib"
-  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/imbstack/taskcluster-installer.git"
   },
-  "main": "./src/build.js",
   "dependencies": {
+    "commander": "^2.14.1",
     "death": "^1.1.0",
     "dockerode": "^2.5.3",
     "dot": "^1.1.2",
