@@ -1,5 +1,6 @@
 const _ = require('lodash');
 const util = require('util');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const {PassThrough} = require('stream');
@@ -27,9 +28,27 @@ class BuildService {
     this.serviceRelease = {name: serviceName};
     build.release.services.push(this.serviceRelease);
 
-    this.workDir = fs.mkdtempSync(path.join('/tmp', this.serviceName + '-'));
+    this.workDir = path.join(build.workDir, `service-${this.serviceName}`);
+    if (!fs.existsSync(this.workDir)) {
+      fs.mkdirSync(this.workDir);
+    }
+
     this.git = git(this.workDir);
+
     this.docker = new Docker();
+    // when running a docker container, always remove the container when finished, 
+    // mount the workdir at /workdir, and run as the current (non-container) user
+    // so that file ownership remains as expected
+    this.dockerRunOpts = {
+      AutoRemove: true,
+      User: `${os.userInfo().uid}:${os.userInfo().gid}`,
+      Binds: [
+        '/etc/passwd:/etc/passwd:ro',
+        '/etc/group:/etc/group:ro',
+        `${this.workDir}:/workdir`,
+      ],
+    };
+
     this.buildConfig = {
       buildType: 'heroku-buildpack',
       stack: 'heroku-16',
@@ -42,8 +61,13 @@ class BuildService {
       title: this.serviceName,
       task: () => new Listr([
         {
-          title: 'Set up release metadata',
-          task: ctx => this.setupReleaseMetadata(ctx),
+          title: 'Set Up',
+          task: ctx => this.setup(ctx),
+        },
+        {
+          title: 'Clean',
+          task: () => this.cleanup(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Clone service repo',
@@ -94,7 +118,11 @@ class BuildService {
     };
   }
 
-  async setupReleaseMetadata(ctx) {
+  /**
+   * Set up for the build process.  This must fill out serviceRelease, and set
+   * ctx.skip if there is no need to actually build the service.
+   */
+  async setup(ctx) {
     const [source, ref] = this.serviceSpec.source.split('#');
     const head = (await this.git.listRemote([source, ref])).split(/\s+/)[0];
     const tag = `${this.build.spec.docker.repositoryPrefix}${this.serviceName}:${head}`;
@@ -110,7 +138,10 @@ class BuildService {
 
   async clone() {
     const [source, ref] = this.serviceSpec.source.split('#');
-    await this.git.clone(source, 'app', ['--depth=1', `-b${ref}`]);
+    // TODO: update if already exists, and remove from clean step
+    if (!fs.existsSync(path.join(this.workDir, 'app'))) {
+      await this.git.clone(source, 'app', ['--depth=1', `-b${ref}`]);
+    }
     const commit = (await git(path.join(this.workDir, 'app')).revparse(['HEAD'])).trim();
   }
 
@@ -124,7 +155,10 @@ class BuildService {
 
   async cloneBuildpack() {
     const [source, ref] = this.buildConfig.buildpack.split('#');
-    await this.git.clone(source, 'buildpack', ['--depth=1', `-b${ref || 'master'}`]);
+    // TODO: update if already exists, and remove from clean step
+    if (!fs.existsSync(path.join(this.workDir, 'buildpack'))) {
+      await this.git.clone(source, 'buildpack', ['--depth=1', `-b${ref || 'master'}`]);
+    }
   }
 
   async pullBuildImage() {
@@ -154,18 +188,17 @@ class BuildService {
     const output = new PassThrough();
     output.pipe(fs.createWriteStream(path.join(this.workDir, 'detect.log')));
 
-    fs.mkdirSync(path.join(this.workDir, 'cache')); // we do not use caching at the moment
-    fs.mkdirSync(path.join(this.workDir, 'env'));
-    fs.mkdirSync(path.join(this.workDir, 'slug'));
+    ['cache', 'env', 'slug'].forEach(dir => {
+      if (!fs.existsSync(path.join(this.workDir, dir))) {
+        fs.mkdirSync(path.join(this.workDir, dir));
+      }
+    });
 
     await this.docker.run(
       this.buildImage,
       ['workdir/buildpack/bin/detect', '/workdir/app'],
       output,
-      {
-        AutoRemove: true,
-        Binds: [`${this.workDir}:/workdir`],
-      },
+      this.dockerRunOpts,
     );
 
     return output.pipe(split(/\r?\n/, null, {trailing: false}));
@@ -180,10 +213,7 @@ class BuildService {
       this.buildImage,
       ['/workdir/buildpack/bin/compile', '/workdir/app', '/workdir/cache', '/workdir/env'],
       output,
-      {
-        AutoRemove: true,
-        Binds: [`${this.workDir}:/workdir`],
-      },
+      this.dockerRunOpts,
     );
     return output.pipe(split(/\r?\n/, null, {trailing: false}));
   }
@@ -233,25 +263,13 @@ class BuildService {
   }
 
   async cleanup() {
-    const log = fs.createWriteStream(path.join(this.workDir, 'clean.log'));
-    try {
-      // If the docker daemon runs as root, it will leave root files scattered
-      // around. We should remove them first.
-      await this.docker.run(
-        this.buildImage,
-        ['rm', '-rf', '/workdir/app', '/workdir/slug', '/workdir/cache', '/workdir/docker'],
-        log,
-        {
-          AutoRemove: true,
-          Binds: [`${this.workDir}:/workdir`],
-        },
-      );
-      await rimraf(this.workDir);
-    } catch (err) {
-      if (!err.message.trim().endsWith('no such file or directory": unknown')) {
-        throw err;
-      }
-    }
+    await Promise.all([
+      'app',
+      'buildpack',
+      'slug',
+      'docker',
+      // cache is left in place
+    ].map(dir => rimraf(path.join(this.workDir, dir))));
   }
 };
 

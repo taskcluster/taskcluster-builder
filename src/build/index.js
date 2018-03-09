@@ -1,24 +1,17 @@
-const ON_DEATH = require('death');
+const fs = require('fs');
 const Listr = require('listr');
 const stringify = require('json-stable-stringify');
 const {BuildService} = require('./service');
 const {BuildSpec} = require('../formats/build-spec');
 const {Release} = require('../formats/release');
 
-// This is being used a shell trap
-const CLEAN_STEPS = [];
-ON_DEATH((signal, err) => {
-  CLEAN_STEPS.forEach(step => {
-    step();
-  });
-  err && console.error(err);
-  process.exit(signal);
-});
-
 class Build {
   constructor(specFile, releaseFile) {
     this.specFile = specFile;
     this.releaseFile = releaseFile;
+
+    // TODO: make this customizable (but stable, so caching works)
+    this.workDir = '/tmp/taskcluster-installer-build';
 
     // the BuildSpec and Release are available at these properties while
     // running
@@ -32,7 +25,6 @@ class Build {
       task: () => new Listr(
         this.spec.services.map(service => {
           const steps = new BuildService(this, service.name);
-          CLEAN_STEPS.push(steps.cleanup);
           return steps.task();
         }),
         {concurrent: 1}
@@ -43,6 +35,11 @@ class Build {
   async run() {
     this.spec = await BuildSpec.fromDirectory(this.specFile);
     this.release = Release.empty();
+
+    // TODO: if --no-cache, blow this away (noting it may contain root-owned stuff)
+    if (!fs.existsSync(this.workDir)) {
+      fs.mkdirSync(this.workDir);
+    }
 
     const build = new Listr([
       this._servicesTask(),
