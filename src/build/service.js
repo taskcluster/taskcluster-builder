@@ -1,3 +1,4 @@
+const _ = require('lodash');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
@@ -11,25 +12,73 @@ const {quote} = require('shell-quote');
 const Observable = require('zen-observable');
 const tar = require('tar-fs');
 const yaml = require('js-yaml');
+const Listr = require('listr');
 
 doT.templateSettings.strip = false;
 const ENTRYPOINT_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'entrypoint.dot')));
 const DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'dockerfile.dot')));
 
-module.exports = class Steps {
-  constructor(service, buildSpec, release) {
-    this.service = service;
-    this.buildSpec = buildSpec;
-    this.service = service;
-    this.releaseService = {};
-    release.services[service.name] = this.releaseService;
-    this.workDir = fs.mkdtempSync(path.join('/tmp', service.name + '-'));
+class BuildService {
+  constructor(build, serviceName) {
+    this.build = build;
+    this.serviceName = serviceName;
+
+    this.serviceSpec = _.find(build.spec.services, {name: serviceName});
+    this.serviceRelease = {};
+    build.release.services[serviceName] = this.serviceRelease;;
+
+    this.workDir = fs.mkdtempSync(path.join('/tmp', this.serviceName + '-'));
     this.git = git(this.workDir);
     this.docker = new Docker();
     this.buildConfig = {
       buildType: 'heroku-buildpack',
       stack: 'heroku-16',
       buildpack: 'https://github.com/heroku/heroku-buildpack-nodejs',
+    };
+  }
+
+  task() {
+    return {
+      title: this.serviceName,
+      skip: () => this.shouldBuild(),
+      task: () => new Listr([
+        {
+          title: 'Clone service repo',
+          task: () => this.clone(),
+        },
+        {
+          title: 'Gather build configuration',
+          task: () => this.readConfig(),
+        },
+        {
+          title: 'Clone buildpack repo',
+          task: () => this.cloneBuildpack(),
+        },
+        {
+          title: 'Pull build image',
+          task: () => this.pullBuildImage(),
+        },
+        {
+          title: 'Detect',
+          task: () => this.detect(),
+        },
+        {
+          title: 'Compile',
+          task: () => this.compile(),
+        },
+        {
+          title: 'Generate entrypoint',
+          task: () => this.entrypoint(),
+        },
+        {
+          title: 'Build image',
+          task: () => this.buildFinalImage(),
+        },
+        {
+          title: 'Clean',
+          task: () => this.cleanup(),
+        },
+      ]),
     };
   }
 
@@ -50,10 +99,10 @@ module.exports = class Steps {
   }
 
   async clone() {
-    const [source, ref] = this.service.source.split('#');
+    const [source, ref] = this.serviceSpec.source.split('#');
     await this.git.clone(source, 'app', ['--depth=1', `-b${ref}`]);
     const commit = (await git(path.join(this.workDir, 'app')).revparse(['HEAD'])).trim();
-    this.releaseService.source = `${source}#${commit}`;
+    this.serviceRelease.source = `${source}#${commit}`;
   }
 
   async readConfig() {
@@ -133,7 +182,7 @@ module.exports = class Steps {
   async entrypoint() {
     const procfilePath = path.join(this.workDir, 'app', 'Procfile');
     if (!fs.existsSync(procfilePath)) {
-      throw new Error(`Service ${this.service.name} has no Procfile`);
+      throw new Error(`Service ${this.serviceName} has no Procfile`);
     }
     const Procfile = fs.readFileSync(procfilePath).toString();
     const procs = Procfile.split('\n').map(line => {
@@ -156,8 +205,8 @@ module.exports = class Steps {
     fs.writeFileSync(path.join(this.workDir, 'docker', 'Dockerfile'), dockerfile);
 
     const log = path.join(this.workDir, 'build.log');
-    const tag = `${this.buildSpec.docker.repositoryPrefix}${this.service.name}:${this.releaseService.sourceSha}`;
-    this.releaseService.dockerImage = tag; // TODO: need @sha256
+    const tag = `${this.build.spec.docker.repositoryPrefix}${this.serviceName}:${this.serviceRelease.sourceSha}`;
+    this.serviceRelease.dockerImage = tag; // TODO: need @sha256
     let context = await this.docker.buildImage(tar.pack(path.join(this.workDir, 'docker')), {t: tag});
     context.pipe(fs.createWriteStream(log));
     return new Observable(observer => {
@@ -168,7 +217,6 @@ module.exports = class Steps {
         observer.complete();
       };
       const onProgress = event => {
-        console.log(event);
         if (event.stream) {
           observer.next(event.stream);
         }
@@ -199,3 +247,5 @@ module.exports = class Steps {
     }
   }
 };
+
+exports.BuildService = BuildService;

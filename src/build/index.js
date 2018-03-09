@@ -1,7 +1,7 @@
 const ON_DEATH = require('death');
 const Listr = require('listr');
 const stringify = require('json-stable-stringify');
-const Steps = require('./build-steps');
+const {BuildService} = require('./service');
 const {BuildSpec} = require('../formats/build-spec');
 const {Release} = require('../formats/release');
 
@@ -15,62 +15,47 @@ ON_DEATH((signal, err) => {
   process.exit(signal);
 });
 
+class Build {
+  constructor(specFile, releaseFile) {
+    this.specFile = specFile;
+    this.releaseFile = releaseFile;
+
+    // the BuildSpec and Release are available at these properties while
+    // running
+    this.spec = null;
+    this.release = null;
+  }
+
+  _servicesTask() {
+    return {
+      title: 'Services',
+      task: () => new Listr(
+        this.spec.services.map(service => {
+          const steps = new BuildService(this, service.name);
+          CLEAN_STEPS.push(steps.cleanup);
+          return steps.task();
+        }),
+        {concurrent: 1}
+      ),
+    };
+  }
+
+  async run() {
+    this.spec = await BuildSpec.fromDirectory(this.specFile);
+    this.release = Release.empty();
+
+    const build = new Listr([
+      this._servicesTask(),
+    ], {concurrent: true});
+
+    await build.run();
+    this.release.write(this.releaseFile);
+  }
+}
+
 const main = async (specFile, releaseFile) => {
-  const spec = await BuildSpec.fromDirectory(specFile);
-  const release = Release.empty();
-
-  const buildProcess = new Listr(
-    spec.services.map(service => {
-      const steps = new Steps(service, spec, release);
-      CLEAN_STEPS.push(steps.cleanup);
-      return {
-        title: service.name,
-        skip: () => steps.shouldBuild(),
-        task: () => new Listr([
-          {
-            title: 'Clone service repo',
-            task: () => steps.clone(),
-          },
-          {
-            title: 'Gather build configuration',
-            task: () => steps.readConfig(),
-          },
-          {
-            title: 'Clone buildpack repo',
-            task: () => steps.cloneBuildpack(),
-          },
-          {
-            title: 'Pull build image',
-            task: () => steps.pullBuildImage(),
-          },
-          {
-            title: 'Detect',
-            task: () => steps.detect(),
-          },
-          {
-            title: 'Compile',
-            task: () => steps.compile(),
-          },
-          {
-            title: 'Generate entrypoint',
-            task: () => steps.entrypoint(),
-          },
-          {
-            title: 'Build image',
-            task: () => steps.buildFinalImage(),
-          },
-          {
-            title: 'Clean',
-            task: () => steps.cleanup(),
-          },
-        ])
-      };
-    }),
-    {concurrent: 1, debug: 1}
-  );
-
-  await buildProcess.run();
-  release.write(releaseFile);
+  const build = new Build(specFile, releaseFile);
+  await build.run();
 };
 
 module.exports = main;
