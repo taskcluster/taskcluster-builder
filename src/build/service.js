@@ -40,69 +40,78 @@ class BuildService {
   task() {
     return {
       title: this.serviceName,
-      skip: () => this.shouldBuild(),
       task: () => new Listr([
+        {
+          title: 'Set up release metadata',
+          task: ctx => this.setupReleaseMetadata(ctx),
+        },
         {
           title: 'Clone service repo',
           task: () => this.clone(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Gather build configuration',
           task: () => this.readConfig(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Clone buildpack repo',
           task: () => this.cloneBuildpack(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Pull build image',
           task: () => this.pullBuildImage(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Detect',
           task: () => this.detect(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Compile',
           task: () => this.compile(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Generate entrypoint',
           task: () => this.entrypoint(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Build image',
           task: () => this.buildFinalImage(),
+          skip: ctx => ctx.skip,
         },
         {
           title: 'Clean',
           task: () => this.cleanup(),
+          skip: ctx => ctx.skip,
         },
       ]),
     };
   }
 
-  async shouldBuild() {
-    return false; // TODO
-    const [source, ref] = this.service.source.split('#');
-    const head = await this.git.listRemote([source, ref]);
-    const gitSame = head.split(/\s+/)[0] === this.lockInfo.commit;
+  async setupReleaseMetadata(ctx) {
+    const [source, ref] = this.serviceSpec.source.split('#');
+    const head = (await this.git.listRemote([source, ref])).split(/\s+/)[0];
+    const tag = `${this.build.spec.docker.repositoryPrefix}${this.serviceName}:${head}`;
 
-    const imageExists = (await this.docker.listImages()).map(image =>
-      image.Id.split(':')[1]
-    ).indexOf(this.lockInfo.image) !== -1;
+    this.serviceRelease.source = `${source}#${head}`;
+    this.serviceRelease.dockerImage = tag;
 
-    if (gitSame && imageExists) {
-      return 'Already up to date with repo';
-    }
-
+    // set up to skip other tasks if this tag already exists locally
+    const dockerImages = await this.docker.listImages();
+    // TODO: need docker image sha, if it exists (or set it later)
+    ctx.skip = dockerImages.some(image => image.RepoTags.indexOf(tag) !== -1);
   }
 
   async clone() {
     const [source, ref] = this.serviceSpec.source.split('#');
     await this.git.clone(source, 'app', ['--depth=1', `-b${ref}`]);
     const commit = (await git(path.join(this.workDir, 'app')).revparse(['HEAD'])).trim();
-    this.serviceRelease.source = `${source}#${commit}`;
   }
 
   async readConfig() {
@@ -205,9 +214,7 @@ class BuildService {
     fs.writeFileSync(path.join(this.workDir, 'docker', 'Dockerfile'), dockerfile);
 
     const log = path.join(this.workDir, 'build.log');
-    const tag = `${this.build.spec.docker.repositoryPrefix}${this.serviceName}:${this.serviceRelease.sourceSha}`;
-    this.serviceRelease.dockerImage = tag; // TODO: need @sha256
-    let context = await this.docker.buildImage(tar.pack(path.join(this.workDir, 'docker')), {t: tag});
+    let context = await this.docker.buildImage(tar.pack(path.join(this.workDir, 'docker')), {t: this.serviceRelease.dockerImage});
     context.pipe(fs.createWriteStream(log));
     return new Observable(observer => {
       const onFinished = (err, output) => {
