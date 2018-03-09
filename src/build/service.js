@@ -24,8 +24,8 @@ class BuildService {
     this.serviceName = serviceName;
 
     this.serviceSpec = _.find(build.spec.services, {name: serviceName});
-    this.serviceRelease = {};
-    build.release.services[serviceName] = this.serviceRelease;;
+    this.serviceRelease = {name: serviceName};
+    build.release.services.push(this.serviceRelease);
 
     this.workDir = fs.mkdtempSync(path.join('/tmp', this.serviceName + '-'));
     this.git = git(this.workDir);

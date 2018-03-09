@@ -18,8 +18,9 @@ Taskcluster-installer can read some older versions of releases, but sufficiently
 
 ## services
 
-The top-level `services` property contains an object describing the Taskcluster services, keyed by their short name (e.g., `queue`).
+The top-level `services` property contains an array of services that may be deployed.
 Each entry has the following keys:
 
+* `name` - service name
 * `source` - the git URL, with the sha1 in the fragment, from which this image was built
 * `dockerImage` - a reference to the docker image to deploy (in the format `<registry>/<repo>:<tag>`

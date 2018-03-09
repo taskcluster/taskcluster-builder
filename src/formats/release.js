@@ -8,7 +8,7 @@ class Release {
   static empty() {
     const release = new Release();
     release.version = VERSION;
-    release.services = {};
+    release.services = [];
 
     return release;
   }
