@@ -43,8 +43,6 @@ class BuildService {
       AutoRemove: true,
       User: `${os.userInfo().uid}:${os.userInfo().gid}`,
       Binds: [
-        '/etc/passwd:/etc/passwd:ro',
-        '/etc/group:/etc/group:ro',
         `${this.workDir}:/workdir`,
       ],
     };
@@ -133,7 +131,7 @@ class BuildService {
     // set up to skip other tasks if this tag already exists locally
     const dockerImages = await this.docker.listImages();
     // TODO: need docker image sha, if it exists (or set it later)
-    ctx.skip = dockerImages.some(image => image.RepoTags.indexOf(tag) !== -1);
+    ctx.skip = dockerImages.some(image => image.RepoTags && image.RepoTags.indexOf(tag) !== -1);
   }
 
   async clone() {
@@ -149,7 +147,7 @@ class BuildService {
     const configFile = path.join(this.workDir, 'app', '.build-config.yml');
     if (fs.existsSync(configFile)) {
       const config = yaml.safeLoad(configFile);
-			this.buildConfig = Object.assign({}, this.buildConfig, config);
+      this.buildConfig = Object.assign({}, this.buildConfig, config);
     }
   }
 
