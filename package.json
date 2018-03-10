@@ -11,6 +11,15 @@
     "type": "git",
     "url": "https://github.com/imbstack/taskcluster-installer.git"
   },
+  "scripts": {
+    "lint": "eslint src/*.js src/*/*.js test/*.js",
+    "pretest": "yarn lint"
+  },
+  "engine-strict": true,
+  "engines": {
+    "node": "^9.8.0",
+    "yarn": "^1.0.0"
+  },
   "dependencies": {
     "commander": "^2.14.1",
     "dockerode": "^2.5.3",
@@ -25,5 +34,8 @@
     "split": "^1.0.1",
     "tar-fs": "^1.16.0",
     "zen-observable": "^0.7.1"
+  },
+  "devDependencies": {
+    "eslint-config-taskcluster": "^3.1.0"
   }
 }

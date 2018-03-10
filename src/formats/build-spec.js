@@ -7,7 +7,7 @@ const VERSION = 1;
 class BuildSpec {
   static fromDirectory(specFile) {
     const filename = path.join(specFile, 'main.yml');
-    const spec = new BuildSpec()
+    const spec = new BuildSpec();
     Object.assign(spec, yaml.safeLoad(fs.readFileSync(filename)));
 
     if (spec.version > VERSION) {
