@@ -272,7 +272,7 @@ class BuildService {
       };
       const onProgress = event => {
         if (event.stream) {
-          observer.next(event.stream);
+          observer.next(event.stream.trimRight());
         }
       };
       this.docker.modem.followProgress(context, onFinished, onProgress);
