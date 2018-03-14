@@ -25,6 +25,7 @@
     "commander": "^2.14.1",
     "dockerode": "^2.5.3",
     "dot": "^1.1.2",
+    "got": "^8.3.0",
     "js-yaml": "^3.11.0",
     "json-e": "^2.5.0",
     "json-stable-stringify": "^1.0.1",

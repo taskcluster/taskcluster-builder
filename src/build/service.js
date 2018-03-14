@@ -3,8 +3,10 @@ const util = require('util');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const {spawn} = require('child_process');
 const {PassThrough} = require('stream');
 const split = require('split');
+const got = require('got');
 const rimraf = util.promisify(require('rimraf'));
 const git = require('simple-git/promise');
 const Docker = require('dockerode');
@@ -24,6 +26,7 @@ class BuildService {
     this.serviceName = serviceName;
 
     this.cfg = build.cfg;
+    this.options = build.options;
 
     this.serviceSpec = _.find(build.spec.build.services, {name: serviceName});
     this.workDir = path.join(build.workDir, `service-${this.serviceName}`);
@@ -75,52 +78,57 @@ class BuildService {
         {
           title: 'Clean',
           task: () => this.cleanup(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Clone service repo',
           task: () => this.clone(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Gather build configuration',
           task: () => this.readConfig(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Clone buildpack repo',
           task: () => this.cloneBuildpack(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Pull build image',
           task: () => this.pullBuildImage(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Detect',
           task: () => this.detect(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Compile',
           task: () => this.compile(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Generate entrypoint',
           task: () => this.entrypoint(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
         },
         {
           title: 'Build image',
           task: () => this.buildFinalImage(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild,
+        },
+        {
+          title: 'Push image (takes a while and may look like it is stalled)',
+          task: (ctx, task) => this.pushImage(task),
+          skip: ctx => ctx.skipPush,
         },
         {
           title: 'Clean',
           task: () => this.cleanup(),
-          skip: ctx => ctx.skip,
+          skip: ctx => ctx.skipBuild && ctx.skipPush,
         },
       ]),
     };
@@ -128,8 +136,8 @@ class BuildService {
 
   /**
    * Set up for the build process.  This must fill out the
-   * serviceSpec.dockerImage, and set ctx.skip if there is no need to actually
-   * build the service.
+   * serviceSpec.dockerImage, and set ctx.skipBuild if there is no need to actually
+   * build the service. Set skipPush if no need to push.
    */
   async setup(ctx) {
     const [source, ref] = this.serviceSpec.source.split('#');
@@ -142,7 +150,8 @@ class BuildService {
     // set up to skip other tasks if this tag already exists locally
     const dockerImages = await this.docker.listImages();
     // TODO: need docker image sha, if it exists (or set it later)
-    ctx.skip = dockerImages.some(image => image.RepoTags.indexOf(tag) !== -1);
+    ctx.skipBuild = dockerImages.some(image => image.RepoTags && image.RepoTags.indexOf(tag) !== -1);
+    ctx.skipPush = !this.options.push;
   }
 
   async clone() {
@@ -276,6 +285,38 @@ class BuildService {
       };
       this.docker.modem.followProgress(context, onFinished, onProgress);
     });
+  }
+
+  async pushImage(task) {
+    const repoImage = this.serviceSpec.dockerImage.split(':');
+    try {
+      const res = await got(`https://index.docker.io/v1/repositories/${repoImage[0]}/tags`, {json: true}); // Sad hack
+      if (res.body && _.includes(res.body.map(l => l.name), repoImage[1])) {
+        return task.skip(`${this.serviceSpec.dockerImage} already exists on dockerhub`);
+      }
+    } catch (err) {
+      if (err.statusCode !== 404) {
+        throw err;
+      }
+    }
+    const log = path.join(this.workDir, 'push.log');
+    const logFile = fs.createWriteStream(log);
+    return new Observable(observer => {
+      const push = spawn('docker', ['push', this.serviceSpec.dockerImage]);
+      push.on('error', observer.error);
+      push.stdout.pipe(logFile);
+      push.stderr.pipe(logFile);
+      push.stdout.on('data', d => observer.next(d.toString()));
+      push.stderr.on('data', d => observer.next(d.toString()));
+      push.on('exit', (code, signal) => {
+        if (code !== 0) {
+          observer.error(new Error(`push failed! check ${log} for reason`));
+        } else {
+          observer.complete();
+        }
+      });
+    });
+    return push.stdout;
   }
 
   async cleanup() {
