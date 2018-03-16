@@ -1,9 +1,9 @@
+const _ = require('lodash');
 const fs = require('fs');
-const Listr = require('listr');
-const stringify = require('json-stable-stringify');
-const {BuildService} = require('./service');
-const {ClusterSpec} = require('../formats/cluster-spec');
 const config = require('typed-env-config');
+const {serviceTasks} = require('./service');
+const {ClusterSpec} = require('../formats/cluster-spec');
+const {TaskGraph} = require('console-taskgraph');
 
 class Build {
   constructor(input, output) {
@@ -11,23 +11,13 @@ class Build {
     this.output = output;
 
     // TODO: make this customizable (but stable, so caching works)
-    this.workDir = '/tmp/taskcluster-installer-build';
+    this.baseDir = '/tmp/taskcluster-installer-build';
 
     this.spec = null;
     this.cfg = null;
   }
 
-  _servicesTask() {
-    return {
-      title: 'Services',
-      task: () => new Listr(
-        this.spec.build.services.map(service => {
-          const steps = new BuildService(this, service.name);
-          return steps.task();
-        }),
-        {concurrent: 1}
-      ),
-    };
+  _servicesTasks() {
   }
 
   async run() {
@@ -41,15 +31,27 @@ class Build {
     });
 
     // TODO: if --no-cache, blow this away (noting it may contain root-owned stuff)
-    if (!fs.existsSync(this.workDir)) {
-      fs.mkdirSync(this.workDir);
+    if (!fs.existsSync(this.baseDir)) {
+      fs.mkdirSync(this.baseDir);
     }
 
-    const build = new Listr([
-      this._servicesTask(),
-    ], {concurrent: true});
+    const taskgraph = new TaskGraph(
+      _.flatten(this.spec.build.services.map(
+        service => serviceTasks({
+          baseDir: this.baseDir,
+          spec: this.spec,
+          cfg: this.cfg,
+          name: service.name,
+        }))));
+    const context = await taskgraph.run();
 
-    await build.run();
+    // fill in the cluster spec with the results of the build
+    this.spec.build.services.forEach(service => {
+      service.dockerImage = context[`service-${service.name}-docker-image`];
+      service.exactSource = context[`service-${service.name}-exact-source`];
+    });
+
+    // and write it back out
     this.spec.write(this.output);
   }
 }
