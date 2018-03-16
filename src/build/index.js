@@ -6,9 +6,10 @@ const {ClusterSpec} = require('../formats/cluster-spec');
 const config = require('typed-env-config');
 
 class Build {
-  constructor(input, output) {
+  constructor(input, output, options) {
     this.input = input;
     this.output = output;
+    this.options = options;
 
     // TODO: make this customizable (but stable, so caching works)
     this.workDir = '/tmp/taskcluster-installer-build';
@@ -54,8 +55,8 @@ class Build {
   }
 }
 
-const main = async (input, output) => {
-  const build = new Build(input, output);
+const main = async (input, output, options) => {
+  const build = new Build(input, output, options);
   await build.run();
 };
 
