@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const {PassThrough} = require('stream');
 const split = require('split');
+const {spawn} = require('child_process'); 
 const rimraf = util.promisify(require('rimraf'));
 const git = require('simple-git/promise');
 const Docker = require('dockerode');
@@ -13,12 +14,13 @@ const {quote} = require('shell-quote');
 const Observable = require('zen-observable');
 const tar = require('tar-fs');
 const yaml = require('js-yaml');
+const got = require('got');
 
 doT.templateSettings.strip = false;
 const ENTRYPOINT_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'entrypoint.dot')));
 const DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'dockerfile.dot')));
 
-const serviceTasks = ({baseDir, spec, cfg, name}) => {
+const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
   const service = _.find(spec.build.services, {name});
   const workDir = path.join(baseDir, `service-${name}`);
   const appDir = path.join(workDir, 'app');
@@ -329,6 +331,59 @@ const serviceTasks = ({baseDir, spec, cfg, name}) => {
               utils.status({progress: 100 * parseInt(parts[1], 10) / (parseInt(parts[2], 10) + 1)});
             }
           });
+      }));
+
+      return provides;
+    },
+  });
+
+  tasks.push({
+    title: `Service ${name} - Push Image`,
+    requires: [
+      `service-${name}-docker-image`,
+      `service-${name}-image-built`,
+      `service-${name}-image-exists`,
+    ],
+    provides: [
+    ],
+    run: async (requirements, utils) => {
+      const provides = {
+      };
+
+      // bail out early if we can skip this..
+      if (requirements[`service-${name}-image-exists`] || !cmdOptions.push) {
+        return utils.skip(provides);
+      }
+
+      const dockerImage = requirements[`service-${name}-docker-image`];
+      const repoImage = dockerImage.split(':');
+      try {
+        const res = await got(`https://index.docker.io/v1/repositories/${repoImage[0]}/tags`, {json: true}); // Sad hack
+        if (res.body && _.includes(res.body.map(l => l.name), repoImage[1])) {
+          utils.status({message: `${dockerImage} already exists on dockerhub`});
+          return utils.skip(provides);
+        }
+      } catch (err) {
+        if (err.statusCode !== 404) {
+          throw err;
+        }
+      }
+      const log = path.join(workDir, 'push.log');
+      const logFile = fs.createWriteStream(log);
+      await utils.waitFor(new Observable(observer => {
+        const push = spawn('docker', ['push', dockerImage]);
+        push.on('error', observer.error);
+        push.stdout.pipe(logFile);
+        push.stderr.pipe(logFile);
+        push.stdout.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
+        push.stderr.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
+        push.on('exit', (code, signal) => {
+          if (code !== 0) {
+            observer.error(new Error(`push failed! check ${log} for reason`));
+          } else {
+            observer.complete();
+          }
+        });
       }));
 
       return provides;

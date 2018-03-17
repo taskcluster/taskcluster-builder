@@ -6,9 +6,10 @@ const {ClusterSpec} = require('../formats/cluster-spec');
 const {TaskGraph} = require('console-taskgraph');
 
 class Build {
-  constructor(input, output) {
+  constructor(input, output, cmdOptions) {
     this.input = input;
     this.output = output;
+    this.cmdOptions = cmdOptions;
 
     // TODO: make this customizable (but stable, so caching works)
     this.baseDir = '/tmp/taskcluster-installer-build';
@@ -42,6 +43,7 @@ class Build {
           spec: this.spec,
           cfg: this.cfg,
           name: service.name,
+          cmdOptions: this.cmdOptions,
         }))));
     const context = await taskgraph.run();
 
@@ -56,8 +58,8 @@ class Build {
   }
 }
 
-const main = async (input, output) => {
-  const build = new Build(input, output);
+const main = async (input, output, options) => {
+  const build = new Build(input, output, options);
   await build.run();
 };
 
