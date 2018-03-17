@@ -203,6 +203,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       `service-${name}-docker-image`, // docker image tag
       `service-${name}-exact-source`, // exact source URL
       `service-${name}-image-exists`, // true if the image already exists
+      `service-${name}-image-on-registry`, // true if the image already exists
     ],
     run: async (requirements, utils) => {
       utils.step({title: 'Clean'});
@@ -241,6 +242,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       };
 
       utils.step({title: 'Check for Existing Image'});
+
       const [source, ref] = service.source.split('#');
       const head = (await git(workDir).listRemote([source, ref])).split(/\s+/)[0];
       const tag = `${cfg.docker.repositoryPrefix}${name}:${head}`;
@@ -250,12 +252,16 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       // TODO: need docker image sha, if it exists (or set it later)
       const dockerImageExists = dockerImages.some(image => image.RepoTags.indexOf(tag) !== -1);
 
-      // TODO: if not found locally, try to pull it
+      utils.step({title: 'Check for Existing Image on Registry'});
+
+      // check whether it's on the registry, too
+      const onRegistry = await dockerRegistryCheck({tag});
 
       return {
         [`service-${name}-docker-image`]: tag,
         [`service-${name}-exact-source`]: `${source}#${head}`,
         [`service-${name}-image-exists`]: dockerImageExists,
+        [`service-${name}-image-on-registry`]: onRegistry,
       };
     },
   });
@@ -265,6 +271,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
     requires: [
       `service-${name}-docker-image`,
       `service-${name}-image-exists`,
+      `service-${name}-image-on-registry`,
       `service-${name}-exact-source`,
     ],
     provides: [
@@ -276,7 +283,8 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       };
 
       // bail out early if we can skip this..
-      if (requirements[`service-${name}-image-exists`]) {
+      if (requirements[`service-${name}-image-exists`] || requirements[`service-${name}-image-on-registry`]) {
+        // TODO: need to get app dir from that image..
         return utils.skip(provides);
       }
 
@@ -348,6 +356,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
     requires: [
       `service-${name}-docker-image`,
       `service-${name}-image-exists`,
+      `service-${name}-image-on-registry`,
       `service-${name}-exact-source`,
       `service-${name}-built-app-dir`,
     ],
@@ -360,7 +369,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       };
 
       // bail out early if we can skip this..
-      if (requirements[`service-${name}-image-exists`]) {
+      if (requirements[`service-${name}-image-exists`] || requirements[`service-${name}-image-on-registry`]) {
         return utils.skip(provides);
       }
 
@@ -395,25 +404,23 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       `service-${name}-docker-image`,
       `service-${name}-image-built`,
       `service-${name}-image-exists`,
+      `service-${name}-image-on-registry`,
     ],
     provides: [
     ],
     run: async (requirements, utils) => {
+      const tag = requirements[`service-${name}-docker-image`];
       const provides = {
       };
 
-      // bail out early if we can skip this..
-      if (requirements[`service-${name}-image-exists`] || !cmdOptions.push) {
-        return utils.skip(provides);
-      }
-      
-      utils.step({title: 'Checking for existing image on registry'});
-      const tag = requirements[`service-${name}-docker-image`];
-      if (await dockerRegistryCheck({tag})) {
+      if (!cmdOptions.push) {
         return utils.skip(provides);
       }
 
-      utils.step({title: 'Pushing to registry'});
+      if (requirements[`service-${name}-image-on-registry`]) {
+        throw new Error(`Image ${tag} already exists on the registry; not pushing`);
+      }
+
       await dockerPush({
         logfile: 'docker-push.log',
         tag,
