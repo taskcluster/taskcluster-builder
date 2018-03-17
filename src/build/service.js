@@ -109,6 +109,73 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
     }));
   };
 
+  const dockerBuild = async ({logfile, tag, dir, utils}) => {
+    utils.status({progress: 0, message: 'Packing build tarball'});
+    const tarball = tar.pack(dir);
+
+    utils.status({progress: 0, message: `Building ${tag}`});
+    const buildStream = await docker.buildImage(tarball, {t: tag});
+    if (logfile) {
+      const log = path.join(workDir, logfile);
+      buildStream.pipe(fs.createWriteStream(log));
+    }
+
+    await utils.waitFor(new Observable(observer => {
+      docker.modem.followProgress(buildStream,
+        err => err ? observer.error(err) : observer.complete(),
+        update => {
+          if (!update.stream) {
+            return;
+          }
+          observer.next(update.stream);
+          const parts = /^Step (\d+)\/(\d+)/.exec(update.stream);
+          if (parts) {
+            utils.status({progress: 100 * parseInt(parts[1], 10) / (parseInt(parts[2], 10) + 1)});
+          }
+        });
+    }));
+  };
+
+  const dockerRegistryCheck = async ({tag}) => {
+    const [repo, imagetag] = tag.split(/:/);
+    try {
+      // Acces the registry API directly to see if this tag already exists, and do not push if so.
+      // TODO: this won't work with custom registries!
+      const res = await got(`https://index.docker.io/v1/repositories/${repo}/tags`, {json: true});
+      if (res.body && _.includes(res.body.map(l => l.name), imagetag)) {
+        return true;
+      }
+    } catch (err) {
+      if (err.statusCode !== 404) {
+        throw err;
+      }
+    }
+
+    return false;
+  };
+
+  const dockerPush = async ({tag, logfile, utils}) => {
+    await utils.waitFor(new Observable(observer => {
+      const push = spawn('docker', ['push', tag]);
+      push.on('error', err => observer.error(err));
+      if (logfile) {
+        const log = path.join(workDir, logfile);
+        const logStream = fs.createWriteStream(log);
+        push.stdout.pipe(logStream);
+        push.stderr.pipe(logStream);
+      }
+      push.stdout.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
+      push.stderr.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
+      push.on('exit', (code, signal) => {
+        if (code !== 0) {
+          observer.error(new Error(`push failed! check ${logfile} for reason`));
+        } else {
+          observer.complete();
+        }
+      });
+    }));
+  };
+
   const writeEntrypointScript = () => {
     const procfilePath = path.join(appDir, 'Procfile');
     if (!fs.existsSync(procfilePath)) {
@@ -311,27 +378,12 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       const dockerfile = DOCKERFILE_TEMPLATE({buildImage});
       fs.writeFileSync(path.join(workDir, 'docker', 'Dockerfile'), dockerfile);
 
-      const log = path.join(workDir, 'build.log');
-      const tag = requirements[`service-${name}-docker-image`];
-      utils.status({progress: 0, message: `Building ${tag}`});
-      const buildStream = await docker.buildImage(
-        tar.pack(path.join(workDir, 'docker')),
-        {t: tag});
-      buildStream.pipe(fs.createWriteStream(log));
-      await utils.waitFor(new Observable(observer => {
-        docker.modem.followProgress(buildStream,
-          err => err ? observer.error(err) : observer.complete(),
-          update => {
-            if (!update.stream) {
-              return;
-            }
-            observer.next(update.stream);
-            const parts = /^Step (\d+)\/(\d+)/.exec(update.stream);
-            if (parts) {
-              utils.status({progress: 100 * parseInt(parts[1], 10) / (parseInt(parts[2], 10) + 1)});
-            }
-          });
-      }));
+      await dockerBuild({
+        dir: path.join(workDir, 'docker'),
+        logfile: 'docker-build.log',
+        tag: requirements[`service-${name}-docker-image`],
+        utils,
+      });
 
       return provides;
     },
@@ -354,37 +406,19 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       if (requirements[`service-${name}-image-exists`] || !cmdOptions.push) {
         return utils.skip(provides);
       }
-
-      const dockerImage = requirements[`service-${name}-docker-image`];
-      const repoImage = dockerImage.split(':');
-      try {
-        const res = await got(`https://index.docker.io/v1/repositories/${repoImage[0]}/tags`, {json: true}); // Sad hack
-        if (res.body && _.includes(res.body.map(l => l.name), repoImage[1])) {
-          utils.status({message: `${dockerImage} already exists on dockerhub`});
-          return utils.skip(provides);
-        }
-      } catch (err) {
-        if (err.statusCode !== 404) {
-          throw err;
-        }
+      
+      utils.step({title: 'Checking for existing image on registry'});
+      const tag = requirements[`service-${name}-docker-image`];
+      if (await dockerRegistryCheck({tag})) {
+        return utils.skip(provides);
       }
-      const log = path.join(workDir, 'push.log');
-      const logFile = fs.createWriteStream(log);
-      await utils.waitFor(new Observable(observer => {
-        const push = spawn('docker', ['push', dockerImage]);
-        push.on('error', observer.error);
-        push.stdout.pipe(logFile);
-        push.stderr.pipe(logFile);
-        push.stdout.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
-        push.stderr.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
-        push.on('exit', (code, signal) => {
-          if (code !== 0) {
-            observer.error(new Error(`push failed! check ${log} for reason`));
-          } else {
-            observer.complete();
-          }
-        });
-      }));
+
+      utils.step({title: 'Pushing to registry'});
+      await dockerPush({
+        logfile: 'docker-push.log',
+        tag,
+        utils,
+      });
 
       return provides;
     },
