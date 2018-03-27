@@ -1,20 +1,15 @@
 const _ = require('lodash');
 const util = require('util');
-const os = require('os');
 const fs = require('fs');
 const path = require('path');
-const {PassThrough} = require('stream');
 const split = require('split');
-const {spawn} = require('child_process'); 
 const rimraf = util.promisify(require('rimraf'));
 const git = require('simple-git/promise');
-const Docker = require('dockerode');
 const doT = require('dot');
 const {quote} = require('shell-quote');
-const Observable = require('zen-observable');
-const tar = require('tar-fs');
 const yaml = require('js-yaml');
-const got = require('got');
+const {gitClone, dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
+  dockerPush} = require('./utils');
 
 doT.templateSettings.strip = false;
 const ENTRYPOINT_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'entrypoint.dot')));
@@ -27,7 +22,6 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
   const buildpackDir = path.join(workDir, 'buildpack');
 
   const tasks = [];
-  let docker, dockerRunOpts;
 
   const cleanup = async () => {
     await Promise.all([
@@ -37,143 +31,6 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       'docker',
       // cache is left in place
     ].map(dir => rimraf(path.join(workDir, dir))));
-  };
-
-  const gitClone = async ({dir, url, sha, utils}) => {
-    const [source, ref] = url.split('#');
-
-    utils.status({message: `Cloning ${source}`});
-    // TODO: update if already exists, and remove from clean step
-    if (!fs.existsSync(path.join(workDir, dir))) {
-      await git(workDir).clone(source, dir, ['--depth=1', `-b${ref || 'master'}`]);
-    }
-    // TODO: if sha is specified, reset to it
-  };
-
-  const dockerRun = async ({logfile, command, image, utils}) => {
-    const output = new PassThrough();
-    if (logfile) {
-      output.pipe(fs.createWriteStream(path.join(workDir, logfile)));
-    }
-
-    const runPromise = docker.run(
-      image,
-      command,
-      output,
-      dockerRunOpts,
-    );
-
-    await utils.waitFor(output);
-    await utils.waitFor(runPromise);
-  };
-
-  const dockerPull = async ({image, utils}) => {
-    utils.status({message: `docker pull ${image}`});
-    const dockerStream = await new Promise(
-      (resolve, reject) => docker.pull(image, (err, stream) => err ? reject(err) : resolve(stream)));
-
-    await utils.waitFor(new Observable(observer => {
-      let downloading = {}, extracting = {}, totals = {};
-      docker.modem.followProgress(dockerStream,
-        err => err ? observer.error(err) : observer.complete(),
-        update => {
-          // The format of this stream appears undocumented, but we can fake it based on observations..
-          // general messages seem to lack progressDetail
-          if (!update.progressDetail) {
-            return;
-          }
-
-          let progressed = false;
-          if (update.status === 'Waiting') {
-            totals[update.id] = 104857600; // a guess: 100MB
-            progressed = true;
-          } else if (update.status === 'Downloading') {
-            downloading[update.id] = update.progressDetail.current;
-            totals[update.id] = update.progressDetail.total;
-            progressed = true;
-          } else if (update.status === 'Extracting') {
-            extracting[update.id] = update.progressDetail.current;
-            totals[update.id] = update.progressDetail.total;
-            progressed = true;
-          }
-
-          if (progressed) {
-            // calculate overall progress by assuming that every image must be
-            // downloaded and extracted, and that those both take the same amount
-            // of time per byte.
-            total = _.sum(Object.values(totals)) * 2;
-            current = _.sum(Object.values(downloading)) + _.sum(Object.values(extracting));
-            utils.status({progress: current * 100 / total});
-          }
-        });
-    }));
-  };
-
-  const dockerBuild = async ({logfile, tag, dir, utils}) => {
-    utils.status({progress: 0, message: 'Packing build tarball'});
-    const tarball = tar.pack(dir);
-
-    utils.status({progress: 0, message: `Building ${tag}`});
-    const buildStream = await docker.buildImage(tarball, {t: tag});
-    if (logfile) {
-      const log = path.join(workDir, logfile);
-      buildStream.pipe(fs.createWriteStream(log));
-    }
-
-    await utils.waitFor(new Observable(observer => {
-      docker.modem.followProgress(buildStream,
-        err => err ? observer.error(err) : observer.complete(),
-        update => {
-          if (!update.stream) {
-            return;
-          }
-          observer.next(update.stream);
-          const parts = /^Step (\d+)\/(\d+)/.exec(update.stream);
-          if (parts) {
-            utils.status({progress: 100 * parseInt(parts[1], 10) / (parseInt(parts[2], 10) + 1)});
-          }
-        });
-    }));
-  };
-
-  const dockerRegistryCheck = async ({tag}) => {
-    const [repo, imagetag] = tag.split(/:/);
-    try {
-      // Acces the registry API directly to see if this tag already exists, and do not push if so.
-      // TODO: this won't work with custom registries!
-      const res = await got(`https://index.docker.io/v1/repositories/${repo}/tags`, {json: true});
-      if (res.body && _.includes(res.body.map(l => l.name), imagetag)) {
-        return true;
-      }
-    } catch (err) {
-      if (err.statusCode !== 404) {
-        throw err;
-      }
-    }
-
-    return false;
-  };
-
-  const dockerPush = async ({tag, logfile, utils}) => {
-    await utils.waitFor(new Observable(observer => {
-      const push = spawn('docker', ['push', tag]);
-      push.on('error', err => observer.error(err));
-      if (logfile) {
-        const log = path.join(workDir, logfile);
-        const logStream = fs.createWriteStream(log);
-        push.stdout.pipe(logStream);
-        push.stderr.pipe(logStream);
-      }
-      push.stdout.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
-      push.stderr.pipe(split(/\r?\n/, null, {trailing: false})).on('data', d => observer.next(d.toString()));
-      push.on('exit', (code, signal) => {
-        if (code !== 0) {
-          observer.error(new Error(`push failed! check ${logfile} for reason`));
-        } else {
-          observer.complete();
-        }
-      });
-    }));
   };
 
   const writeEntrypointScript = () => {
@@ -221,26 +78,6 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         }
       });
 
-      docker = new Docker();
-      // when running a docker container, always remove the container when finished, 
-      // mount the workdir at /workdir, and run as the current (non-container) user
-      // so that file ownership remains as expected.  Set up /etc/passwd and /etc/group
-      // to define names for those uid/gid, too.
-      const {uid, gid} = os.userInfo();
-      fs.writeFileSync(path.join(workDir, 'passwd'),
-        `root:x:0:0:root:/root:/bin/bash\nbuilder:x:${uid}:${gid}:builder:/:/bin/bash\n`);
-      fs.writeFileSync(path.join(workDir, 'group'),
-        `root:x:0:\nbuilder:x:${gid}:\n`);
-      dockerRunOpts = {
-        AutoRemove: true,
-        User: `${uid}:${gid}`,
-        Binds: [
-          `${workDir}/passwd:/etc/passwd:ro`,
-          `${workDir}/group:/etc/group:ro`,
-          `${workDir}:/workdir`,
-        ],
-      };
-
       utils.step({title: 'Check for Existing Image'});
 
       const [source, ref] = service.source.split('#');
@@ -248,9 +85,9 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       const tag = `${cfg.docker.repositoryPrefix}${name}:${head}`;
 
       // set up to skip other tasks if this tag already exists locally
-      const dockerImages = await docker.listImages();
+      const localDockerImages = await dockerImages({workDir});
       // TODO: need docker image sha, if it exists (or set it later)
-      const dockerImageExists = dockerImages.some(image => image.RepoTags.indexOf(tag) !== -1);
+      const dockerImageExists = localDockerImages.some(image => image.RepoTags.indexOf(tag) !== -1);
 
       utils.step({title: 'Check for Existing Image on Registry'});
 
@@ -294,6 +131,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         dir: 'app',
         url: service.source,
         utils,
+        workDir,
       });
 
       utils.step({title: 'Read Build Config'});
@@ -317,17 +155,18 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         dir: 'buildpack',
         url: buildConfig.buildpack,
         utils,
+        workDir,
       });
 
       utils.step({title: 'Pull Stack Image'});
 
       stackImage = `heroku/${buildConfig.stack.replace('-', ':')}`;
-      await dockerPull({image: stackImage, utils});
+      await dockerPull({image: stackImage, utils, workDir});
 
       utils.step({title: 'Pull Build Image'});
 
       buildImage = `heroku/${buildConfig.stack.replace('-', ':')}-build`;
-      await dockerPull({image: buildImage, utils});
+      await dockerPull({image: buildImage, utils, workDir});
 
       utils.step({title: 'Buildpack Detect'});
 
@@ -336,6 +175,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         command: ['workdir/buildpack/bin/detect', '/workdir/app'],
         logfile: 'detect.log',
         utils,
+        workDir,
       });
 
       utils.step({title: 'Buildpack Compile'});
@@ -345,6 +185,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         command: ['workdir/buildpack/bin/compile', '/workdir/app', '/workdir/cache', '/workdir/env'],
         logfile: 'compile.log',
         utils,
+        workDir,
       });
 
       return provides;
@@ -392,6 +233,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         logfile: 'docker-build.log',
         tag: requirements[`service-${name}-docker-image`],
         utils,
+        workDir,
       });
 
       return provides;
@@ -425,6 +267,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         logfile: 'docker-push.log',
         tag,
         utils,
+        workDir,
       });
 
       return provides;
