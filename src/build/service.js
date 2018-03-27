@@ -87,7 +87,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       // set up to skip other tasks if this tag already exists locally
       const localDockerImages = await dockerImages({workDir});
       // TODO: need docker image sha, if it exists (or set it later)
-      const dockerImageExists = localDockerImages.some(image => image.RepoTags.indexOf(tag) !== -1);
+      const dockerImageExists = localDockerImages.some(image => image.RepoTags && image.RepoTags.indexOf(tag) !== -1);
 
       utils.step({title: 'Check for Existing Image on Registry'});
 

@@ -5,3 +5,95 @@ services:
   # build may include a different version in different runs.  Ideally this would
   # be either a specific rev or a release version
   source: https://github.com/djmitche/taskcluster-ping#master
+
+docsSources:
+# operations
+- name: statsum
+  tier: operations
+  source: https://github.com/taskcluster/statsum#master
+# workers
+- name: docker-worker
+  tier: workers
+  source: https://github.com/taskcluster/docker-worker#master
+- name: generic-worker
+  tier: workers
+  source: https://github.com/taskcluster/generic-worker#master
+- name: taskcluster-worker
+  tier: workers
+  source: https://github.com/taskcluster/taskcluster-worker#master
+# libraries
+- name: azure-blob-storage
+  tier: libraries
+  source: https://github.com/taskcluster/azure-blob-storage#master
+- name: azure-entities
+  tier: libraries
+  source: https://github.com/taskcluster/azure-entities#master
+- name: docker-exec-websocket-server
+  tier: libraries
+  source: https://github.com/taskcluster/docker-exec-websocket-server#master
+- name: fast-azure-storage
+  tier: libraries
+  source: https://github.com/taskcluster/fast-azure-storage#master
+- name: go-schematypes
+  tier: libraries
+  source: https://github.com/taskcluster/go-schematypes#master
+- name: json-e
+  tier: libraries
+  source: https://github.com/taskcluster/json-e#master
+- name: pulse-publisher
+  tier: libraries
+  source: https://github.com/taskcluster/pulse-publisher#master
+- name: taskcluster-cli
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-cli#master
+- name: taskcluster-client
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-client#master
+- name: taskcluster-client-go
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-client-go#master
+- name: taskcluster-client-java
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-client-java#master
+- name: taskcluster-client-web
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-client-web#master
+- name: taskcluster-client.py
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-client.py#master
+- name: taskcluster-lib-api
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-api#master
+- name: taskcluster-lib-app
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-app#master
+- name: taskcluster-lib-docs
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-docs#master
+- name: taskcluster-lib-iterate
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-iterate#master
+- name: taskcluster-lib-loader
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-loader#master
+- name: taskcluster-lib-log
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-log#master
+- name: taskcluster-lib-monitor
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-monitor#master
+- name: taskcluster-lib-scopes
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-scopes#master
+- name: taskcluster-lib-testing
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-testing#master
+- name: taskcluster-lib-validate
+  tier: libraries
+  source: https://github.com/taskcluster/taskcluster-lib-validate#master
+- name: typed-env-config
+  tier: libraries
+  source: https://github.com/taskcluster/typed-env-config#master
+- name: ws-shell
+  tier: libraries
+  source: https://github.com/taskcluster/ws-shell#master

@@ -2,6 +2,7 @@ const _ = require('lodash');
 const fs = require('fs');
 const config = require('typed-env-config');
 const {serviceTasks} = require('./service');
+const {docsSourceTasks} = require('./docs-source');
 const {ClusterSpec} = require('../formats/cluster-spec');
 const {TaskGraph} = require('console-taskgraph');
 
@@ -16,9 +17,6 @@ class Build {
 
     this.spec = null;
     this.cfg = null;
-  }
-
-  _servicesTasks() {
   }
 
   async run() {
@@ -36,21 +34,36 @@ class Build {
       fs.mkdirSync(this.baseDir);
     }
 
-    const taskgraph = new TaskGraph(
-      _.flatten(this.spec.build.services.map(
-        service => serviceTasks({
-          baseDir: this.baseDir,
-          spec: this.spec,
-          cfg: this.cfg,
-          name: service.name,
-          cmdOptions: this.cmdOptions,
-        }))));
+    const taskgraph = new TaskGraph([]
+      .concat(
+        _.flatten(this.spec.build.services.map(
+          service => serviceTasks({
+            baseDir: this.baseDir,
+            spec: this.spec,
+            cfg: this.cfg,
+            name: service.name,
+            cmdOptions: this.cmdOptions,
+          }))))
+      .concat(
+        _.flatten(this.spec.build.docsSources.map(
+          src => docsSourceTasks({
+            baseDir: this.baseDir,
+            spec: this.spec,
+            cfg: this.cfg,
+            name: src.name,
+            cmdOptions: this.cmdOptions,
+          })))),
+    );
     const context = await taskgraph.run();
 
     // fill in the cluster spec with the results of the build
     this.spec.build.services.forEach(service => {
       service.dockerImage = context[`service-${service.name}-docker-image`];
       service.exactSource = context[`service-${service.name}-exact-source`];
+    });
+
+    this.spec.build.docsSources.forEach(src => {
+      src.exactSource = context[`docs-source-${src.name}-exact-source`];
     });
 
     // and write it back out
