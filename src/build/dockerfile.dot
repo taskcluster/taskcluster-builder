@@ -1,4 +1,4 @@
-FROM {{=it.buildImage}}
+FROM {{=it.stackImage}}
 
 COPY app /app
 ENV HOME=/app

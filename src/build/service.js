@@ -384,7 +384,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       fs.renameSync(appDir, path.join(workDir, 'docker', 'app'));
       fs.renameSync(path.join(workDir, 'entrypoint'), path.join(workDir, 'docker', 'entrypoint'));
 
-      const dockerfile = DOCKERFILE_TEMPLATE({buildImage});
+      const dockerfile = DOCKERFILE_TEMPLATE({stackImage});
       fs.writeFileSync(path.join(workDir, 'docker', 'Dockerfile'), dockerfile);
 
       await dockerBuild({
