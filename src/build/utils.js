@@ -73,10 +73,11 @@ _dockerSetup.memos = {};
  * - workDir -- base directory for operations
  * - logfile -- name of the file to write the log to (in workDir)
  * - command -- command to run
+ * - env -- environment variables to set
  * - image -- image to run it in
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.dockerRun = async ({workDir, logfile, command, image, utils}) => {
+exports.dockerRun = async ({workDir, logfile, command, env, binds, image, utils}) => {
   const {docker, dockerRunOpts} = await _dockerSetup({workDir});
 
   const output = new PassThrough();
@@ -84,15 +85,24 @@ exports.dockerRun = async ({workDir, logfile, command, image, utils}) => {
     output.pipe(fs.createWriteStream(path.join(workDir, logfile)));
   }
 
+  const {Binds, ...otherOpts} = dockerRunOpts;
+
   const runPromise = docker.run(
     image,
     command,
     output,
-    dockerRunOpts,
+    {
+      Binds: [...Binds, ...binds || []],
+      Env: env,
+      ...otherOpts,
+    },
   );
 
   await utils.waitFor(output);
-  await utils.waitFor(runPromise);
+  const container = await utils.waitFor(runPromise);
+  if (container.output.StatusCode !== 0) {
+    throw new Error(`Container exited with status ${container.output.StatusCode}`);
+  }
 };
 
 /**
