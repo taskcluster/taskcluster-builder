@@ -8,6 +8,7 @@ const git = require('simple-git/promise');
 const doT = require('dot');
 const {quote} = require('shell-quote');
 const yaml = require('js-yaml');
+const tar = require('tar-fs');
 const {gitClone, dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
   dockerPush} = require('./utils');
 
@@ -72,7 +73,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         fs.mkdirSync(workDir);
       }
 
-      ['cache', 'env', 'slug', 'docker'].forEach(dir => {
+      ['cache', 'env', 'slug'].forEach(dir => {
         if (!fs.existsSync(path.join(workDir, dir))) {
           fs.mkdirSync(path.join(workDir, dir));
         }
@@ -220,16 +221,21 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
 
       utils.step({title: 'Build Final Image'});
 
-      // TODO: omit git dir, but not node_modules
-      // TODO: no need to rename, just include in tarball
-      fs.renameSync(appDir, path.join(workDir, 'docker', 'app'));
-      fs.renameSync(path.join(workDir, 'entrypoint'), path.join(workDir, 'docker', 'entrypoint'));
-
       const dockerfile = DOCKERFILE_TEMPLATE({stackImage});
-      fs.writeFileSync(path.join(workDir, 'docker', 'Dockerfile'), dockerfile);
+      fs.writeFileSync(path.join(workDir, 'Dockerfile'), dockerfile);
+
+      // build a tarfile containing the app directory and Dockerfile, but without
+      // app/.git
+      utils.step({title: 'Creating Docker-Build Tarball'});
+
+      const appGitDir = path.join(appDir, '.git');
+      const tarball = tar.pack(workDir, {
+        entries: ['app', 'Dockerfile'],
+        ignore: fulname => name.startsWith(appGitDir),
+      });
 
       await dockerBuild({
-        dir: path.join(workDir, 'docker'),
+        tarball,
         logfile: 'docker-build.log',
         tag: requirements[`service-${name}-docker-image`],
         utils,

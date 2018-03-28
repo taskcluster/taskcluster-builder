@@ -7,7 +7,6 @@ const Docker = require('dockerode');
 const Observable = require('zen-observable');
 const {PassThrough} = require('stream');
 const got = require('got');
-const tar = require('tar-fs');
 const {spawn} = require('child_process'); 
 
 /**
@@ -162,14 +161,11 @@ exports.dockerPull = async ({workDir, image, utils}) => {
  * - workDir -- base directory for operations
  * - logfile -- name of the file to write the log to (in workDir)
  * - tag -- tag to build
- * - dir -- directory containing the Dockerfile
+ * - tarball -- tarfile containing the Dockerfile and any other required files
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.dockerBuild = async ({workDir, logfile, tag, dir, utils}) => {
+exports.dockerBuild = async ({workDir, logfile, tag, tarball, utils}) => {
   const {docker, dockerRunOpts} = await _dockerSetup({workDir});
-
-  utils.status({progress: 0, message: 'Packing build tarball'});
-  const tarball = tar.pack(dir);
 
   utils.status({progress: 0, message: `Building ${tag}`});
   const buildStream = await docker.buildImage(tarball, {t: tag});
