@@ -47,10 +47,14 @@ const _dockerSetup = ({workDir}) => {
     dockerRunOpts = {
       AutoRemove: true,
       User: `${uid}:${gid}`,
+      Env: [
+        'HOME=/app',
+      ],
       Binds: [
         `${workDir}/passwd:/etc/passwd:ro`,
         `${workDir}/group:/etc/group:ro`,
         `${workDir}:/workdir`,
+        `${workDir}/app:/app`,
       ],
     };
 
@@ -84,7 +88,7 @@ exports.dockerRun = async ({workDir, logfile, command, env, binds, image, utils}
     output.pipe(fs.createWriteStream(path.join(workDir, logfile)));
   }
 
-  const {Binds, ...otherOpts} = dockerRunOpts;
+  const {Binds, Env, ...otherOpts} = dockerRunOpts;
 
   const runPromise = docker.run(
     image,
@@ -92,7 +96,7 @@ exports.dockerRun = async ({workDir, logfile, command, env, binds, image, utils}
     output,
     {
       Binds: [...Binds, ...binds || []],
-      Env: env,
+      Env: [...Env, ...env || []],
       ...otherOpts,
     },
   );

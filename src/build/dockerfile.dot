@@ -2,6 +2,6 @@ FROM {{=it.stackImage}}
 
 COPY app /app
 ENV HOME=/app
+WORKDIR /app
 
-ADD entrypoint /entrypoint
-ENTRYPOINT ["/entrypoint"]
+ENTRYPOINT ["/app/entrypoint"]

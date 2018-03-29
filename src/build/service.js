@@ -21,18 +21,9 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
   const workDir = path.join(baseDir, `service-${name}`);
   const appDir = path.join(workDir, 'app');
   const buildpackDir = path.join(workDir, 'buildpack');
+  let stackImage, buildImage;
 
   const tasks = [];
-
-  const cleanup = async () => {
-    await Promise.all([
-      'app',
-      'buildpack',
-      'slug',
-      'docker',
-      // cache is left in place
-    ].map(dir => rimraf(path.join(workDir, dir))));
-  };
 
   const writeEntrypointScript = () => {
     const procfilePath = path.join(appDir, 'Procfile');
@@ -51,7 +42,7 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       return {name: parts[1], command: quote([parts[2]])};
     }).filter(l => l !== null);
     const entrypoint = ENTRYPOINT_TEMPLATE({procs});
-    fs.writeFileSync(path.join(workDir, 'entrypoint'), entrypoint, {mode: 0o777});
+    fs.writeFileSync(path.join(appDir, 'entrypoint'), entrypoint, {mode: 0o777});
   };
 
   tasks.push({
@@ -64,20 +55,44 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
       `service-${name}-image-on-registry`, // true if the image already exists
     ],
     run: async (requirements, utils) => {
-      utils.step({title: 'Clean'});
-      await cleanup();
-
       utils.step({title: 'Set Up'});
 
       if (!fs.existsSync(workDir)) {
         fs.mkdirSync(workDir);
       }
 
-      ['cache', 'env', 'slug'].forEach(dir => {
+      ['cache', 'env'].forEach(dir => {
         if (!fs.existsSync(path.join(workDir, dir))) {
           fs.mkdirSync(path.join(workDir, dir));
         }
       });
+
+      utils.step({title: 'Check out Service Repo'});
+
+      await gitClone({
+        dir: 'app',
+        url: service.source,
+        utils,
+        workDir,
+      });
+
+      utils.step({title: 'Read Build Config'});
+
+      // default buildConfig
+      buildConfig = {
+        buildType: 'heroku-buildpack',
+        stack: 'heroku-16',
+        buildpack: 'https://github.com/heroku/heroku-buildpack-nodejs',
+      };
+
+      const buildConfigFile = path.join(appDir, '.build-config.yml');
+      if (fs.existsSync(buildConfigFile)) {
+        const config = yaml.safeLoad(buildConfigFile);
+        Object.assign(buildConfig, config);
+      }
+
+      stackImage = `heroku/${buildConfig.stack.replace('-', ':')}`;
+      buildImage = `heroku/${buildConfig.stack.replace('-', ':')}-build`;
 
       utils.step({title: 'Check for Existing Image'});
 
@@ -126,30 +141,6 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         return utils.skip(provides);
       }
 
-      utils.step({title: 'Check out Service Repo'});
-
-      await gitClone({
-        dir: 'app',
-        url: service.source,
-        utils,
-        workDir,
-      });
-
-      utils.step({title: 'Read Build Config'});
-
-      // default buildConfig
-      buildConfig = {
-        buildType: 'heroku-buildpack',
-        stack: 'heroku-16',
-        buildpack: 'https://github.com/heroku/heroku-buildpack-nodejs',
-      };
-
-      const buildConfigFile = path.join(appDir, '.build-config.yml');
-      if (fs.existsSync(buildConfigFile)) {
-        const config = yaml.safeLoad(buildConfigFile);
-        Object.assign(buildConfig, config);
-      }
-
       utils.step({title: 'Check out Buildpack Repo'});
 
       await gitClone({
@@ -161,19 +152,17 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
 
       utils.step({title: 'Pull Stack Image'});
 
-      stackImage = `heroku/${buildConfig.stack.replace('-', ':')}`;
       await dockerPull({image: stackImage, utils, workDir});
 
       utils.step({title: 'Pull Build Image'});
 
-      buildImage = `heroku/${buildConfig.stack.replace('-', ':')}-build`;
       await dockerPull({image: buildImage, utils, workDir});
 
       utils.step({title: 'Buildpack Detect'});
 
       await dockerRun({
         image: buildImage,
-        command: ['workdir/buildpack/bin/detect', '/workdir/app'],
+        command: ['/workdir/buildpack/bin/detect', '/app'],
         logfile: 'detect.log',
         utils,
         workDir,
@@ -183,11 +172,15 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
 
       await dockerRun({
         image: buildImage,
-        command: ['workdir/buildpack/bin/compile', '/workdir/app', '/workdir/cache', '/workdir/env'],
+        command: ['/workdir/buildpack/bin/compile', '/app', '/workdir/cache', '/workdir/env'],
         logfile: 'compile.log',
         utils,
         workDir,
       });
+
+      utils.step({title: 'Create Entrypoint Script'});
+
+      writeEntrypointScript();
 
       return provides;
     },
@@ -215,10 +208,6 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         return utils.skip(provides);
       }
 
-      utils.step({title: 'Create Entrypoint Script'});
-
-      writeEntrypointScript();
-
       utils.step({title: 'Build Final Image'});
 
       const dockerfile = DOCKERFILE_TEMPLATE({stackImage});
@@ -238,6 +227,35 @@ const serviceTasks = ({baseDir, spec, cfg, name, cmdOptions}) => {
         tarball,
         logfile: 'docker-build.log',
         tag: requirements[`service-${name}-docker-image`],
+        utils,
+        workDir,
+      });
+
+      return provides;
+    },
+  });
+
+  tasks.push({
+    title: `Service ${name} - Generate Docs Metadata`,
+    requires: [
+      `service-${name}-built-app-dir`,
+    ],
+    provides: [
+      `service-${name}-docs-dir`,
+    ],
+    run: async (requirements, utils) => {
+      const docsDir = path.join(workDir, 'docs');
+      const provides = {
+        [`service-${name}-docs-dir`]: docsDir,
+      };
+
+      await rimraf(docsDir);
+
+      await dockerRun({
+        image: stackImage,
+        command: ['/app/entrypoint', 'write-docs'],
+        env: ['DOCS_OUTPUT_DIR=/workdir/docs'],
+        logfile: 'generate-docs.log',
         utils,
         workDir,
       });
