@@ -10,39 +10,66 @@ const got = require('got');
 const {spawn} = require('child_process'); 
 
 /**
+ * Determine if the given directory is stamped with the given sources.
+ */
+exports.dirStamped = ({dir, sources}) => {
+  if (!fs.existsSync(dir)) {
+    return false;
+  }
+
+  const sourcesFile = path.join(dir, '.sources.json');
+  if (!fs.existsSync(sourcesFile)) {
+    return false;
+  }
+
+  const foundSources = JSON.parse(fs.readFileSync(sourcesFile, {encoding: 'utf-8'}));
+  if (!_.isEqual(foundSources, sources)) {
+    return false;
+  }
+
+  return true;
+};
+
+/**
+ * Stamp a directory as having been created with the given sources
+ */
+exports.stampDir = ({dir, sources}) => {
+  const sourcesFile = path.join(dir, '.sources.json');
+  fs.writeFileSync(sourcesFile, JSON.stringify(sources));
+};
+
+/**
  * Perform a git clone
  *
- * - workDir -- base directory for git operations
  * - dir -- directory to clone to
  * - url -- repo#ref URL to clone
  * - sha -- sha to check out
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.gitClone = async ({workDir, dir, url, sha, utils}) => {
+exports.gitClone = async ({dir, url, sha, utils}) => {
   const [source, ref] = url.split('#');
 
-  utils.status({message: `Cloning ${source}`});
-  // TODO: update if already exists, and remove from clean step
-  if (!fs.existsSync(path.join(workDir, dir))) {
-    await git(workDir).clone(source, dir, ['--depth=1', `-b${ref || 'master'}`]);
+  // TODO: update if already exists
+  if (!fs.existsSync(dir)) {
+    await git('/').clone(source, dir, ['--depth=1', `-b${ref || 'master'}`]);
   }
   // TODO: if sha is specified, reset to it
 };
 
 /**
- * Set up to call docker in the given workDir (internal use only)
+ * Set up to call docker in the given baseDir (internal use only)
  */
-const _dockerSetup = ({workDir}) => {
-  const inner = async ({workDir}) => {
+const _dockerSetup = ({baseDir}) => {
+  const inner = async ({baseDir}) => {
     docker = new Docker();
     // when running a docker container, always remove the container when finished, 
     // mount the workdir at /workdir, and run as the current (non-container) user
     // so that file ownership remains as expected.  Set up /etc/passwd and /etc/group
     // to define names for those uid/gid, too.
     const {uid, gid} = os.userInfo();
-    fs.writeFileSync(path.join(workDir, 'passwd'),
+    fs.writeFileSync(path.join(baseDir, 'passwd'),
       `root:x:0:0:root:/root:/bin/bash\nbuilder:x:${uid}:${gid}:builder:/:/bin/bash\n`);
-    fs.writeFileSync(path.join(workDir, 'group'),
+    fs.writeFileSync(path.join(baseDir, 'group'),
       `root:x:0:\nbuilder:x:${gid}:\n`);
     dockerRunOpts = {
       AutoRemove: true,
@@ -51,21 +78,19 @@ const _dockerSetup = ({workDir}) => {
         'HOME=/app',
       ],
       Binds: [
-        `${workDir}/passwd:/etc/passwd:ro`,
-        `${workDir}/group:/etc/group:ro`,
-        `${workDir}:/workdir`,
-        `${workDir}/app:/app`,
+        `${baseDir}/passwd:/etc/passwd:ro`,
+        `${baseDir}/group:/etc/group:ro`,
       ],
     };
 
     return {docker, dockerRunOpts};
   };
 
-  if (!(workDir in _dockerSetup.memos)) {
+  if (!(baseDir in _dockerSetup.memos)) {
     // cache the promise to return multiple times
-    _dockerSetup.memos[workDir] = inner({workDir});
+    _dockerSetup.memos[baseDir] = inner({baseDir});
   }
-  return _dockerSetup.memos[workDir];
+  return _dockerSetup.memos[baseDir];
 };
 _dockerSetup.memos = {};
 
@@ -73,19 +98,19 @@ _dockerSetup.memos = {};
  * Run a command (`docker run`), logging the output to TaskGraph and to a local
  * logfile
  *
- * - workDir -- base directory for operations
- * - logfile -- name of the file to write the log to (in workDir)
+ * - baseDir -- base directory for operations
+ * - logfile -- name of the file to write the log to
  * - command -- command to run
  * - env -- environment variables to set
  * - image -- image to run it in
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.dockerRun = async ({workDir, logfile, command, env, binds, image, utils}) => {
-  const {docker, dockerRunOpts} = await _dockerSetup({workDir});
+exports.dockerRun = async ({baseDir, logfile, command, env, binds, image, utils}) => {
+  const {docker, dockerRunOpts} = await _dockerSetup({baseDir});
 
   const output = new PassThrough();
   if (logfile) {
-    output.pipe(fs.createWriteStream(path.join(workDir, logfile)));
+    output.pipe(fs.createWriteStream(logfile));
   }
 
   const {Binds, Env, ...otherOpts} = dockerRunOpts;
@@ -111,12 +136,12 @@ exports.dockerRun = async ({workDir, logfile, command, env, binds, image, utils}
 /**
  * Pull an image from a docker registry (`docker pull`)
  *
- * - workDir -- base directory for operations
+ * - baseDir -- base directory for operations
  * - image -- image to run it in
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.dockerPull = async ({workDir, image, utils}) => {
-  const {docker, dockerRunOpts} = await _dockerSetup({workDir});
+exports.dockerPull = async ({baseDir, image, utils}) => {
+  const {docker, dockerRunOpts} = await _dockerSetup({baseDir});
 
   utils.status({message: `docker pull ${image}`});
   const dockerStream = await new Promise(
@@ -162,20 +187,19 @@ exports.dockerPull = async ({workDir, image, utils}) => {
 /**
  * Build a docker image (`docker build`).
  *
- * - workDir -- base directory for operations
- * - logfile -- name of the file to write the log to (in workDir)
+ * - baseDir -- base directory for operations
+ * - logfile -- name of the file to write the log to
  * - tag -- tag to build
  * - tarball -- tarfile containing the Dockerfile and any other required files
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.dockerBuild = async ({workDir, logfile, tag, tarball, utils}) => {
-  const {docker, dockerRunOpts} = await _dockerSetup({workDir});
+exports.dockerBuild = async ({baseDir, logfile, tag, tarball, utils}) => {
+  const {docker, dockerRunOpts} = await _dockerSetup({baseDir});
 
   utils.status({progress: 0, message: `Building ${tag}`});
   const buildStream = await docker.buildImage(tarball, {t: tag});
   if (logfile) {
-    const log = path.join(workDir, logfile);
-    buildStream.pipe(fs.createWriteStream(log));
+    buildStream.pipe(fs.createWriteStream(logfile));
   }
 
   await utils.waitFor(new Observable(observer => {
@@ -197,10 +221,10 @@ exports.dockerBuild = async ({workDir, logfile, tag, tarball, utils}) => {
 /**
  * List locally-loaded docker images (`docker images`)
  *
- * - workDir -- base directory for operations
+ * - baseDir -- base directory for operations
  */
-exports.dockerImages = async ({workDir}) => {
-  const {docker} = await _dockerSetup({workDir});
+exports.dockerImages = async ({baseDir}) => {
+  const {docker} = await _dockerSetup({baseDir});
 
   return docker.listImages();
 };
@@ -231,20 +255,19 @@ exports.dockerRegistryCheck = async ({tag}) => {
 /**
  * Push an image to a registry (`docker push`)
  *
- * - workDir -- base directory for operations
+ * - baseDir -- base directory for operations
  * - tag -- tag to push
- * - logfile -- name of the file to write the log to (in workDir)
+ * - logfile -- name of the file to write the log to
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.dockerPush = async ({workDir, tag, logfile, utils}) => {
-  const {docker, dockerRunOpts} = await _dockerSetup({workDir});
+exports.dockerPush = async ({baseDir, tag, logfile, utils}) => {
+  const {docker, dockerRunOpts} = await _dockerSetup({baseDir});
 
   await utils.waitFor(new Observable(observer => {
     const push = spawn('docker', ['push', tag]);
     push.on('error', err => observer.error(err));
     if (logfile) {
-      const log = path.join(workDir, logfile);
-      const logStream = fs.createWriteStream(log);
+      const logStream = fs.createWriteStream(logfile);
       push.stdout.pipe(logStream);
       push.stderr.pipe(logStream);
     }
