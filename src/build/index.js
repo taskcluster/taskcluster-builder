@@ -1,7 +1,10 @@
 const _ = require('lodash');
+const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const config = require('typed-env-config');
+const rimraf = util.promisify(require('rimraf'));
+const mkdirp = util.promisify(require('mkdirp'));
 const {ClusterSpec} = require('../formats/cluster-spec');
 const {TaskGraph} = require('console-taskgraph');
 const {gitClone} = require('./utils');
@@ -35,10 +38,10 @@ class Build {
       env:      process.env,
     });
 
-    // TODO: if --no-cache, blow this away (noting it may contain root-owned stuff)
-    if (!fs.existsSync(this.baseDir)) {
-      fs.mkdirSync(this.baseDir);
+    if (this.cmdOptions.noCache) {
+      await rimraf(this.baseDir);
     }
+    await mkdirp(this.baseDir);
 
     let tasks = [];
 

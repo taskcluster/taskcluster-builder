@@ -35,6 +35,7 @@ Omit `--push` to skip pushing to a Docker registry (e.g., for local testing).
 For best results, the `--base-dir` option should be on fast, large storage.
 
 The build process attempts to skip steps that need not be performed, so re-running the build process is often quite fast.
+The `--no-cache` option will destroy any cached state and start from scratch.
 
 # Deploy
 
