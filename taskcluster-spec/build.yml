@@ -15,6 +15,15 @@ repositories:
     stack: heroku-16
     buildpack: https://github.com/heroku/heroku-buildpack-nodejs
 
+- name: tools
+  kind: service
+  docs:
+    tier: integrations
+  service:
+    buildtype: tools-ui
+    node: 8
+  source: https://github.com/taskcluster/taskcluster-tools#redeploy
+
 # docs/metadata sources that are not compiled into the final product
 
 # operations

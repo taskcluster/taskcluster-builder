@@ -102,10 +102,11 @@ _dockerSetup.memos = {};
  * - logfile -- name of the file to write the log to
  * - command -- command to run
  * - env -- environment variables to set
+ * - workingDir -- directory to run in
  * - image -- image to run it in
  * - utils -- taskgraph utils (waitFor, etc.)
  */
-exports.dockerRun = async ({baseDir, logfile, command, env, binds, image, utils}) => {
+exports.dockerRun = async ({baseDir, logfile, command, env, binds, workingDir, image, utils}) => {
   const {docker, dockerRunOpts} = await _dockerSetup({baseDir});
 
   const output = new PassThrough();
@@ -122,6 +123,7 @@ exports.dockerRun = async ({baseDir, logfile, command, env, binds, image, utils}
     {
       Binds: [...Binds, ...binds || []],
       Env: [...Env, ...env || []],
+      WorkingDir: workingDir,
       ...otherOpts,
     },
   );

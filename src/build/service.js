@@ -11,13 +11,15 @@ const doT = require('dot');
 const {quote} = require('shell-quote');
 const yaml = require('js-yaml');
 const tar = require('tar-fs');
+const tarStream = require('tar-stream');
 const copy = require('recursive-copy');
 const {gitClone, dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
   dockerPush, dirStamped, stampDir} = require('./utils');
 
 doT.templateSettings.strip = false;
 const ENTRYPOINT_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'entrypoint.dot')));
-const DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'dockerfile.dot')));
+const HEROKU_DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'heroku-dockerfile.dot')));
+const TOOLS_UI_DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'tools-ui-dockerfile.dot')));
 
 const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => {
   const repository = _.find(spec.build.repositories, {name});
@@ -26,44 +28,82 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
     fs.mkdirSync(workDir);
   }
 
-  assert(repository.service.buildtype === 'heroku-buildpack', 'I only know how to do heroku buildpacks!');
+  switch (repository.service.buildtype) {
+    case 'heroku-buildpack':
+      herokuBuildpackTasks({tasks, baseDir, spec, cfg, name, cmdOptions, repository, workDir});
+      break;
 
+    case 'tools-ui':
+      toolsUiTasks({tasks, baseDir, spec, cfg, name, cmdOptions, repository, workDir});
+      break;
+
+    default:
+      throw new Error(`Unknown buildtype ${repository.service.buildtype}`);
+  }
+
+  tasks.push({
+    title: `Service ${name} - Push Image`,
+    requires: [
+      `service-${name}-docker-image`,
+      `service-${name}-image-on-registry`,
+    ],
+    provides: [
+    ],
+    run: async (requirements, utils) => {
+      const tag = requirements[`service-${name}-docker-image`];
+
+      if (!cmdOptions.push) {
+        return utils.skip({});
+      }
+
+      if (requirements[`service-${name}-image-on-registry`]) {
+        throw new Error(`Image ${tag} already exists on the registry; not pushing`);
+      }
+
+      await dockerPush({
+        logfile: `${workDir}/docker-push.log`,
+        tag,
+        utils,
+        baseDir,
+      });
+
+      return provides;
+    },
+  });
+};
+
+// add a task to tasks only if it isn't already there
+const ensureTask = (tasks, task) => {
+  if (!_.find(tasks, {title: task.title})) {
+    tasks.push(task);
+  }
+};
+
+// ensure a docker image is present (setting `docker-image-${image}`)
+const ensureDockerImage = (tasks, baseDir, image) => {
+  ensureTask(tasks, {
+    title: `Pull Docker Image ${image}`,
+    requires: [],
+    provides: [
+      `docker-image-${image}`,
+    ],
+    run: async (requirements, utils) => {
+      await dockerPull({image, utils, baseDir});
+    },
+  });
+};
+
+const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, workDir}) => {
   const stackImage = `heroku/${repository.service.stack.replace('-', ':')}`;
   const buildImage = `heroku/${repository.service.stack.replace('-', ':')}-build`;
   const buildpackUrl = repository.service.buildpack;
   const buildpackName = buildpackUrl.startsWith('https://github.com/heroku/') ?
     buildpackUrl.split('/')[4] : buildpackUrl.replace('/', '_');
 
-  // add a task to tasks only if it isn't already there
-  const ensureTask = (task) => {
-    if (!_.find(tasks, {title: task.title})) {
-      tasks.push(task);
-    }
-  };
+  ensureDockerImage(tasks, baseDir, stackImage);
+  ensureDockerImage(tasks, baseDir, buildImage);
 
-  ensureTask({
-    title: `Pull Docker Image ${stackImage}`,
-    requires: [],
-    provides: [
-      `docker-image-${stackImage}`,
-    ],
-    run: async (requirements, utils) => {
-      await dockerPull({image: stackImage, utils, baseDir});
-    },
-  });
-
-  ensureTask({
-    title: `Pull Docker Image ${buildImage}`,
-    requires: [],
-    provides: [
-      `docker-image-${buildImage}`,
-    ],
-    run: async (requirements, utils) => {
-      await dockerPull({image: buildImage, utils, baseDir});
-    },
-  });
-
-  ensureTask({
+  ensureTask(tasks, {
     title: `Clone ${buildpackName}`,
     requires: [],
     provides: [
@@ -97,7 +137,6 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
-      const stampFile = path.join(appDir, '.exact-source');
       const bpDir = requirements[`repo-${buildpackName}`];
       const provides = {
         [`service-${name}-built-app-dir`]: appDir,
@@ -111,7 +150,7 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
       }
 
       utils.step({title: 'Copy Source Repository'});
-      await copy(repoDir, appDir); // TODO: filter out .git
+      await copy(repoDir, appDir, {filter: ['**/*', '!.git'], dot: true});
 
       utils.step({title: 'Buildpack Detect'});
 
@@ -217,7 +256,7 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
       // build a tarfile containing the app directory and Dockerfile
       utils.step({title: 'Create Docker-Build Tarball'});
 
-      const dockerfile = DOCKERFILE_TEMPLATE({stackImage});
+      const dockerfile = HEROKU_DOCKERFILE_TEMPLATE({stackImage});
       fs.writeFileSync(path.join(workDir, 'Dockerfile'), dockerfile);
 
       const appGitDir = path.join(appDir, '.git');
@@ -253,7 +292,6 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
       // note that docs directory paths must have this form (${basedir}/docs is
       // mounted in docker images)
       const docsDir = path.join(baseDir, 'docs', name);
-      const stampFile = path.join(docsDir, '.exact-source');
       const provides = {
         [`docs-${name}-dir`]: docsDir,
       };
@@ -282,28 +320,159 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
       return provides;
     },
   });
+};
+
+const toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, workDir}) => {
+  const docNames = spec.build.repositories.filter(repo => repo.docs).map(repo => repo.name);
+
+  const nodeImage = `node:${repository.service.node}`;
+  ensureDockerImage(tasks, baseDir, nodeImage);
 
   tasks.push({
-    title: `Service ${name} - Push Image`,
+    title: `Service ${name} - Build`,
     requires: [
-      `service-${name}-docker-image`,
-      `service-${name}-image-on-registry`,
+      `docker-image-${nodeImage}`,
+      `repo-${name}-exact-source`,
+      `repo-${name}-dir`,
+      ...docNames.map(name => `docs-${name}-dir`),
+      ...docNames.map(name => `repo-${name}-exact-source`),
     ],
     provides: [
+      `service-${name}-built-app-dir`,
+      `service-${name}-build-dir`, // result of `yarn build`
     ],
     run: async (requirements, utils) => {
-      const tag = requirements[`service-${name}-docker-image`];
+      const repoDir = requirements[`repo-${name}-dir`];
+      const appDir = path.join(workDir, 'app');
+      const cacheDir = path.join(workDir, 'cache');
+      const buildDir = path.join(appDir, 'build');
+      const sources = [name, ...docNames].map(name => requirements[`repo-${name}-exact-source`]);
+      const provides = {
+        [`service-${name}-built-app-dir`]: appDir,
+        [`service-${name}-build-dir`]: buildDir,
+      };
 
-      if (!cmdOptions.push) {
-        return utils.skip({});
+      if (dirStamped({dir: appDir, sources})) {
+        return utils.skip(provides);
+      }
+      await rimraf(appDir);
+      await mkdirp(cacheDir);
+
+      utils.step({title: 'Copy Repository'});
+
+      // copy from the repo (omitting .git as it's not needed)
+      await copy(repoDir, appDir, {filter: ['**/*', '!.git'], dot: true});
+      assert(fs.existsSync(appDir));
+
+      utils.step({title: 'Copy Docs'});
+
+      // copy each docs directory to the appropriate place
+      // in the tools source tree
+      for (let docName of docNames) {
+        utils.status({message: docName});
+
+        const src = requirements[`docs-${docName}-dir`];
+        const tier = JSON.parse(fs.readFileSync(path.join(src, 'metadata.json'))).tier;
+        const dst = path.join(appDir, 'src', 'docs', 'reference', tier, docName);
+
+        await mkdirp(path.dirname(dst));
+        await copy(src, dst, {dot: true});
       }
 
-      if (requirements[`service-${name}-image-on-registry`]) {
-        throw new Error(`Image ${tag} already exists on the registry; not pushing`);
+      utils.step({title: 'Install Dependencies'});
+
+      await dockerRun({
+        image: nodeImage,
+        workingDir: '/app',
+        env: ['YARN_CACHE_FOLDER=/cache'],
+        command: ['yarn'],
+        logfile: `${workDir}/yarn.log`,
+        utils,
+        binds: [
+          `${appDir}:/app`,
+          `${cacheDir}:/cache`,
+        ],
+        baseDir,
+      });
+
+      utils.step({title: 'Build'});
+      utils.status({message: '(this takes several minutes, with no additional output -- be patient)'});
+
+      await dockerRun({
+        image: nodeImage,
+        workingDir: '/app',
+        command: ['yarn', 'build'],
+        logfile: `${workDir}/yarn-build.log`,
+        utils,
+        binds: [
+          `${appDir}:/app`,
+        ],
+        baseDir,
+      });
+
+      stampDir({dir: appDir, sources});
+      return provides;
+    },
+  });
+
+  tasks.push({
+    title: `Service ${name} - Build Image`,
+    requires: [
+      `repo-${name}-exact-source`,
+      `service-${name}-build-dir`,
+    ],
+    provides: [
+      `service-${name}-docker-image`, // docker image tag
+      `service-${name}-image-on-registry`, // true if the image already exists on registry
+    ],
+    run: async (requirements, utils) => {
+      const buildDir = requirements[`service-${name}-build-dir`];
+      const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];
+      const tag = `${cfg.docker.repositoryPrefix}${name}:${headRef}`;
+
+      utils.step({title: 'Check for Existing Images'});
+
+      const imageLocal = (await dockerImages({baseDir}))
+        .some(image => image.RepoTags && image.RepoTags.indexOf(tag) !== -1);
+      const imageOnRegistry = await dockerRegistryCheck({tag});
+
+      const provides = {
+        [`service-${name}-docker-image`]: tag,
+        [`service-${name}-image-on-registry`]: imageOnRegistry,
+      };
+
+      // bail out if we can, pulling the image if it's only available remotely
+      if (!imageLocal && imageOnRegistry) {
+        await dockerPull({image: tag, utils, baseDir});
+        return utils.skip(provides);
+      } else if (imageLocal) {
+        return utils.skip(provides);
       }
 
-      await dockerPush({
-        logfile: `${workDir}/docker-push.log`,
+      // build a tarfile containing the build directory, Dockerfile, and ancillary files
+      utils.step({title: 'Create Docker-Build Tarball'});
+
+      const dockerfile = TOOLS_UI_DOCKERFILE_TEMPLATE({});
+
+      const tarball = tar.pack(buildDir, {
+        finalize: false,
+        map: header => {
+          header.name = `build/${header.name}`;
+          return header;
+        },
+        finish: pack => {
+          pack.entry({name: 'Dockerfile'},
+            TOOLS_UI_DOCKERFILE_TEMPLATE({}));
+          // TODO: maybe this file should be in the build spec???
+          pack.entry({name: 'nginx-site.conf'},
+            fs.readFileSync(path.join(__dirname, 'tools-ui-nginx-site.conf')));
+          pack.finalize();
+        },
+      });
+
+      await dockerBuild({
+        tarball,
+        logfile: `${workDir}/docker-build.log`,
         tag,
         utils,
         baseDir,
@@ -313,7 +482,6 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
     },
   });
 
-  return tasks;
 };
 
 module.exports = generateServiceTasks;
