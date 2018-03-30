@@ -19,8 +19,7 @@ class Build {
     this.output = output;
     this.cmdOptions = cmdOptions;
 
-    // TODO: make this customizable (but stable, so caching works)
-    this.baseDir = '/tmp/taskcluster-installer-build';
+    this.baseDir = cmdOptions['baseDir'] || '/tmp/taskcluster-installer-build';
 
     this.spec = null;
     this.cfg = null;
