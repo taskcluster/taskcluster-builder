@@ -9,6 +9,7 @@ repositories:
   # build may include a different version in different runs.  Ideally this would
   # be either a specific rev or a release version
   source: https://github.com/djmitche/taskcluster-ping#master
+  docs: generated
   service:
     buildtype: heroku-buildpack
     stack: heroku-16

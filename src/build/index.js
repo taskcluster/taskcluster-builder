@@ -6,6 +6,7 @@ const {ClusterSpec} = require('../formats/cluster-spec');
 const {TaskGraph} = require('console-taskgraph');
 const {gitClone} = require('./utils');
 const git = require('simple-git/promise');
+const generateRepoTasks = require('./repo');
 
 const _kindTaskGenerators = {
   service: require('./service'),
@@ -43,28 +44,13 @@ class Build {
     let tasks = [];
 
     this.spec.build.repositories.forEach(repo => {
-      tasks.push({
-        title: `Clone ${repo.name}`,
-        provides: [
-          `repo-${repo.name}-dir`, // full path of the repository
-          `repo-${repo.name}-exact-source`, // exact source URL for the repository
-        ],
-        run: async (requirements, utils) => {
-          const repoDir = path.join(this.baseDir, `repo-${repo.name}`);
-          await gitClone({
-            dir: repoDir,
-            url: repo.source,
-            utils,
-          });
-
-          const repoUrl = repo.source.split('#')[0];
-          const exactSourceRev = (await git(repoDir).revparse(['HEAD'])).split(/\s+/)[0];
-
-          return {
-            [`repo-${repo.name}-dir`]: repoDir,
-            [`repo-${repo.name}-exact-source`]: `${repoUrl}#${exactSourceRev}`,
-          };
-        },
+      generateRepoTasks({
+        tasks,
+        baseDir: this.baseDir,
+        spec: this.spec,
+        cfg: this.cfg,
+        name: repo.name,
+        cmdOptions: this.cmdOptions,
       });
 
       const kindTaskGenerator = _kindTaskGenerators[repo.kind];

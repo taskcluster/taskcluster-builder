@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const split = require('split');
 const rimraf = util.promisify(require('rimraf'));
+const mkdirp = util.promisify(require('mkdirp'));
 const git = require('simple-git/promise');
 const doT = require('dot');
 const {quote} = require('shell-quote');
@@ -228,7 +229,7 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
       await dockerBuild({
         tarball,
         logfile: `${workDir}/docker-build.log`,
-        tag: requirements[`service-${name}-docker-image`],
+        tag,
         utils,
         baseDir,
       });
@@ -249,7 +250,9 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
     ],
     run: async (requirements, utils) => {
       const appDir = requirements[`service-${name}-built-app-dir`];
-      const docsDir = path.join(baseDir, `docs-${name}`);
+      // note that docs directory paths must have this form (${basedir}/docs is
+      // mounted in docker images)
+      const docsDir = path.join(baseDir, 'docs', name);
       const stampFile = path.join(docsDir, '.exact-source');
       const provides = {
         [`docs-${name}-dir`]: docsDir,
@@ -258,14 +261,14 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
       // if we've already built this docsDir with this revision, we're done.
       if (dirStamped({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]})) {
         return utils.skip(provides);
-      } else {
-        await rimraf(docsDir);
       }
+      await rimraf(docsDir);
+      await mkdirp(path.dirname(docsDir));
 
       await dockerRun({
         image: stackImage,
         command: ['/app/entrypoint', 'write-docs'],
-        env: [`DOCS_OUTPUT_DIR=/basedir/docs-${name}`],
+        env: [`DOCS_OUTPUT_DIR=/basedir/docs/${name}`],
         logfile: `${workDir}/generate-docs.log`,
         utils,
         binds: [
