@@ -119,12 +119,12 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
     title: `Clone ${buildpackName}`,
     requires: [],
     provides: [
-      `repo-${buildpackName}`,
+      `repo-${buildpackName}-dir`,
     ],
     run: async (requirements, utils) => {
-      const repoDir = path.join(baseDir, `repo-${buildpackName}`);
+      const repoDir = path.join(baseDir, `repo-${buildpackName}-dir`);
       const provides = {
-        [`repo-${buildpackName}`]: repoDir,
+        [`repo-${buildpackName}-dir`]: repoDir,
       };
 
       const {exactRev, changed} = await gitClone({
@@ -147,7 +147,7 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
       `repo-${name}-dir`,
       `repo-${name}-exact-source`,
       `docker-image-${buildImage}`,
-      `repo-${buildpackName}`,
+      `repo-${buildpackName}-dir`,
     ],
     provides: [
       `service-${name}-built-app-dir`,
@@ -155,7 +155,7 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
-      const bpDir = requirements[`repo-${buildpackName}`];
+      const bpDir = requirements[`repo-${buildpackName}-dir`];
       const provides = {
         [`service-${name}-built-app-dir`]: appDir,
       };
