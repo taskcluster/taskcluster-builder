@@ -19,19 +19,23 @@ const generateRepoTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => {
     ],
     run: async (requirements, utils) => {
       const repoDir = path.join(baseDir, `repo-${name}`);
-      await gitClone({
+      const {exactRev, changed} = await gitClone({
         dir: repoDir,
         url: repository.source,
         utils,
       });
 
-      const repoUrl = repository.source.split('#')[0];
-      const exactSourceRev = (await git(repoDir).revparse(['HEAD'])).split(/\s+/)[0];
-
-      return {
+      const [repoUrl] = repository.source.split('#');
+      const provides = {
         [`repo-${name}-dir`]: repoDir,
-        [`repo-${name}-exact-source`]: `${repoUrl}#${exactSourceRev}`,
+        [`repo-${name}-exact-source`]: `${repoUrl}#${exactRev}`,
       };
+
+      if (changed) {
+        return provides;
+      } else {
+        return utils.skip(provides);
+      }
     },
   });
 

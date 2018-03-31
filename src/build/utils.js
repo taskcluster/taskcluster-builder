@@ -43,17 +43,36 @@ exports.stampDir = ({dir, sources}) => {
  *
  * - dir -- directory to clone to
  * - url -- repo#ref URL to clone
- * - sha -- sha to check out
  * - utils -- taskgraph utils (waitFor, etc.)
+ *
+ * Returns:
+ * {
+ *   exactRev: ..,     // the exact revision checked out
+ *   changed: ..,      // true if the repo was cloned or the revision changed
+ * }
  */
 exports.gitClone = async ({dir, url, sha, utils}) => {
-  const [source, ref] = url.split('#');
+  const [repo, ref = 'master'] = url.split('#');
 
-  // TODO: update if already exists
   if (!fs.existsSync(dir)) {
-    await git('/').clone(source, dir, ['--depth=1', `-b${ref || 'master'}`]);
+    await git('/').clone(repo, dir, ['--depth=1', `-b${ref}`]);
+    const exactRev = (await git(dir).revparse(['HEAD'])).split(/\s+/)[0];
+    return {exactRev, changed: true};
   }
-  // TODO: if sha is specified, reset to it
+
+  const existingRev = (await git(dir).revparse(['HEAD'])).split(/\s+/)[0];
+  // note: this is often empty -- https://github.com/steveukx/git-js/pull/252
+  const remoteRev = (await git(dir).listRemote([repo, ref])).split(/\s+/)[0];
+
+  if (existingRev === remoteRev) {
+    return {exactRev: existingRev, changed: false};
+  }
+
+  await git(dir).fetch([remote, ref]);
+  await git(dir).reset(['--hard', 'FETCH_HEAD']);
+
+  const exactRev = (await git(repoDir).revparse(['HEAD'])).split(/\s+/)[0];
+  return {exactRev, changed: true};
 };
 
 /**

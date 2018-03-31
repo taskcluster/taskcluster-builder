@@ -111,15 +111,21 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
     ],
     run: async (requirements, utils) => {
       const repoDir = path.join(baseDir, `repo-${buildpackName}`);
-      await gitClone({
+      const provides = {
+        [`repo-${buildpackName}`]: repoDir,
+      };
+
+      const {exactRev, changed} = await gitClone({
         dir: repoDir,
         url: buildpackUrl,
         utils,
       });
 
-      return {
-        [`repo-${buildpackName}`]: repoDir,
-      };
+      if (changed) {
+        return provides;
+      } else {
+        return utils.skip(provides);
+      }
     },
   });
 
