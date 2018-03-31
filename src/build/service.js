@@ -88,7 +88,19 @@ const ensureDockerImage = (tasks, baseDir, image) => {
       `docker-image-${image}`,
     ],
     run: async (requirements, utils) => {
+      const images = await dockerImages({baseDir});
+      const exists = (await dockerImages({baseDir}))
+        .some(i => i.RepoTags && i.RepoTags.indexOf(image) !== -1);
+      if (exists) {
+        return utils.skip({
+          [`docker-image-${image}`]: image,
+        });
+      }
+
       await dockerPull({image, utils, baseDir});
+      return {
+        [`docker-image-${image}`]: image,
+      };
     },
   });
 };
