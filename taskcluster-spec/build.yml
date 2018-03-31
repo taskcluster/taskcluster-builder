@@ -33,6 +33,12 @@ repositories:
     tier: operations
   source: https://github.com/taskcluster/statsum#master
 
+- name: taskcluster-installer
+  kind: other
+  docs:
+    tier: operations
+  source: https://github.com/taskcluster/taskcluster-installer#master
+
 # workers
 - name: docker-worker
   kind: other
