@@ -295,49 +295,51 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
     },
   });
 
-  tasks.push({
-    title: `Service ${name} - Generate Docs`,
-    requires: [
-      `repo-${name}-exact-source`,
-      `service-${name}-built-app-dir`,
-      `docker-image-${stackImage}`,
-    ],
-    provides: [
-      `docs-${name}-dir`,
-    ],
-    run: async (requirements, utils) => {
-      const appDir = requirements[`service-${name}-built-app-dir`];
-      // note that docs directory paths must have this form (${basedir}/docs is
-      // mounted in docker images)
-      const docsDir = path.join(baseDir, 'docs', name);
-      const provides = {
-        [`docs-${name}-dir`]: docsDir,
-      };
+  if (repository.docs === 'generated') {
+    tasks.push({
+      title: `Service ${name} - Generate Docs`,
+      requires: [
+        `repo-${name}-exact-source`,
+        `service-${name}-built-app-dir`,
+        `docker-image-${stackImage}`,
+      ],
+      provides: [
+        `docs-${name}-dir`,
+      ],
+      run: async (requirements, utils) => {
+        const appDir = requirements[`service-${name}-built-app-dir`];
+        // note that docs directory paths must have this form (${basedir}/docs is
+        // mounted in docker images)
+        const docsDir = path.join(baseDir, 'docs', name);
+        const provides = {
+          [`docs-${name}-dir`]: docsDir,
+        };
 
-      // if we've already built this docsDir with this revision, we're done.
-      if (dirStamped({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]})) {
-        return utils.skip(provides);
-      }
-      await rimraf(docsDir);
-      await mkdirp(path.dirname(docsDir));
+        // if we've already built this docsDir with this revision, we're done.
+        if (dirStamped({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]})) {
+          return utils.skip(provides);
+        }
+        await rimraf(docsDir);
+        await mkdirp(path.dirname(docsDir));
 
-      await dockerRun({
-        image: stackImage,
-        command: ['/app/entrypoint', 'write-docs'],
-        env: [`DOCS_OUTPUT_DIR=/basedir/docs/${name}`],
-        logfile: `${workDir}/generate-docs.log`,
-        utils,
-        binds: [
-          `${appDir}:/app`,
-          `${baseDir}:/basedir`,
-        ],
-        baseDir,
-      });
+        await dockerRun({
+          image: stackImage,
+          command: ['/app/entrypoint', 'write-docs'],
+          env: [`DOCS_OUTPUT_DIR=/basedir/docs/${name}`],
+          logfile: `${workDir}/generate-docs.log`,
+          utils,
+          binds: [
+            `${appDir}:/app`,
+            `${baseDir}:/basedir`,
+          ],
+          baseDir,
+        });
 
-      stampDir({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]});
-      return provides;
-    },
-  });
+        stampDir({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]});
+        return provides;
+      },
+    });
+  }
 };
 
 const toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, workDir}) => {

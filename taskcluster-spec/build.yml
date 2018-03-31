@@ -15,6 +15,24 @@ repositories:
     stack: heroku-16
     buildpack: https://github.com/heroku/heroku-buildpack-nodejs
 
+- name: auth
+  kind: service
+  source: https://github.com/taskcluster/taskcluster-auth#master
+  docs: false  # TODO
+  service:
+    buildtype: heroku-buildpack
+    stack: heroku-16
+    buildpack: https://github.com/heroku/heroku-buildpack-nodejs
+
+- name: queue
+  kind: service
+  source: https://github.com/taskcluster/taskcluster-queue#master
+  docs: false  # TODO
+  service:
+    buildtype: heroku-buildpack
+    stack: heroku-16
+    buildpack: https://github.com/heroku/heroku-buildpack-nodejs
+
 - name: tools
   kind: service
   docs:
