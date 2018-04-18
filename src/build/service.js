@@ -70,8 +70,6 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
         utils,
         baseDir,
       });
-
-      return provides;
     },
   });
 };
