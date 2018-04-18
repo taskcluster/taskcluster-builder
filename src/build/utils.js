@@ -1,5 +1,6 @@
 const util = require('util');
 const _ = require('lodash');
+const split = require('split');
 const exec = util.promisify(require('child_process').execFile);
 const fs = require('fs');
 const os = require('os');
