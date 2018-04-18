@@ -6,7 +6,6 @@ const path = require('path');
 const split = require('split');
 const rimraf = util.promisify(require('rimraf'));
 const mkdirp = util.promisify(require('mkdirp'));
-const git = require('simple-git/promise');
 const doT = require('dot');
 const {quote} = require('shell-quote');
 const yaml = require('js-yaml');
