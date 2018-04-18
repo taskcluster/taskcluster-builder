@@ -61,7 +61,7 @@ const generateServiceTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => 
       }
 
       if (requirements[`service-${name}-image-on-registry`]) {
-        throw new Error(`Image ${tag} already exists on the registry; not pushing`);
+        return utils.skip({});
       }
 
       await dockerPush({
