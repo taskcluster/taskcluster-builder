@@ -86,6 +86,7 @@ const ensureDockerImage = (tasks, baseDir, image) => {
   ensureTask(tasks, {
     title: `Pull Docker Image ${image}`,
     requires: [],
+    locks: ['docker'],
     provides: [
       `docker-image-${image}`,
     ],
@@ -154,6 +155,7 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
     provides: [
       `service-${name}-built-app-dir`,
     ],
+    locks: ['docker'],
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
@@ -254,6 +256,7 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
       `service-${name}-docker-image`, // docker image tag
       `service-${name}-image-on-registry`, // true if the image already exists on registry
     ],
+    locks: ['docker'],
     run: async (requirements, utils) => {
       const appDir = requirements[`service-${name}-built-app-dir`];
       const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];
@@ -313,6 +316,7 @@ const herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repo
       provides: [
         `docs-${name}-dir`,
       ],
+      locks: ['docker'],
       run: async (requirements, utils) => {
         const appDir = requirements[`service-${name}-built-app-dir`];
         // note that docs directory paths must have this form (${basedir}/docs is
@@ -368,6 +372,7 @@ const toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, 
       `service-${name}-built-app-dir`,
       `service-${name}-build-dir`, // result of `yarn build`
     ],
+    locks: ['docker'],
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
@@ -437,6 +442,7 @@ const toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, 
       `service-${name}-docker-image`, // docker image tag
       `service-${name}-image-on-registry`, // true if the image already exists on registry
     ],
+    locks: ['docker'],
     run: async (requirements, utils) => {
       const buildDir = requirements[`service-${name}-build-dir`];
       const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];
@@ -519,6 +525,7 @@ const docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, wor
       `service-${name}-built-app-dir`,
       `service-${name}-static-dir`, // result of `gulp build-static`
     ],
+    locks: ['docker'],
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
@@ -602,6 +609,7 @@ const docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, wor
       `service-${name}-docker-image`, // docker image tag
       `service-${name}-image-on-registry`, // true if the image already exists on registry
     ],
+    locks: ['docker'],
     run: async (requirements, utils) => {
       const staticDir = requirements[`service-${name}-static-dir`];
       const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];

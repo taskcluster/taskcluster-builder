@@ -16,6 +16,7 @@ const generateRepoTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => {
       `repo-${name}-dir`, // full path of the repository
       `repo-${name}-exact-source`, // exact source URL for the repository
     ],
+    locks: ['git'],
     run: async (requirements, utils) => {
       const repoDir = path.join(baseDir, `repo-${name}`);
       const {exactRev, changed} = await gitClone({
