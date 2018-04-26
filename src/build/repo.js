@@ -33,7 +33,7 @@ const generateRepoTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => {
       if (changed) {
         return provides;
       } else {
-        return utils.skip(provides);
+        return utils.skip({provides});
       }
     },
   });
@@ -61,7 +61,7 @@ const generateRepoTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions}) => {
       };
 
       if (dirStamped({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]})) {
-        return utils.skip(provides);
+        return utils.skip({provides});
       }
 
       await rimraf(docsDir);
