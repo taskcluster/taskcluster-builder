@@ -18,26 +18,23 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
   ensureDockerImage(tasks, baseDir, nodeImage);
 
   tasks.push({
-    title: `Service ${name} - Build`,
+    title: `Service ${name} - Yarn Install`,
     requires: [
       `docker-image-${nodeImage}`,
       `repo-${name}-exact-source`,
       `repo-${name}-dir`,
     ],
     provides: [
-      `service-${name}-built-app-dir`,
-      `service-${name}-build-dir`, // result of `yarn build`
+      `service-${name}-installed-app-dir`,
     ],
     locks: ['docker'],
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
       const cacheDir = path.join(workDir, 'cache');
-      const buildDir = path.join(appDir, 'build');
       const sources = [requirements[`repo-${name}-exact-source`]];
       const provides = {
-        [`service-${name}-built-app-dir`]: appDir,
-        [`service-${name}-build-dir`]: buildDir,
+        [`service-${name}-installed-app-dir`]: appDir,
       };
 
       if (dirStamped({dir: appDir, sources})) {
@@ -52,7 +49,7 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
       await copy(repoDir, appDir, {dot: true});
       assert(fs.existsSync(appDir));
 
-      utils.step({title: 'Install Dependencies'});
+      utils.step({title: 'Run Yarn Install'});
 
       await dockerRun({
         image: nodeImage,
@@ -68,20 +65,9 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
         baseDir,
       });
 
-      utils.step({title: 'Build'});
-      utils.status({message: '(this takes several minutes, with no additional output -- be patient)'});
-
-      await dockerRun({
-        image: nodeImage,
-        workingDir: '/app',
-        command: ['yarn', 'build'],
-        logfile: `${workDir}/yarn-build.log`,
-        utils,
-        binds: [
-          `${appDir}:/app`,
-        ],
-        baseDir,
-      });
+      // Note that we do not run `neutrino build`, as that requires runtime
+      // configuration.  Instead, the Dockerfile is set up to run this at
+      // deployment time.
 
       stampDir({dir: appDir, sources});
       return provides;
@@ -92,7 +78,7 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
     title: `Service ${name} - Build Image`,
     requires: [
       `repo-${name}-exact-source`,
-      `service-${name}-build-dir`,
+      `service-${name}-installed-app-dir`,
     ],
     provides: [
       `service-${name}-docker-image`, // docker image tag
@@ -100,7 +86,7 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
     ],
     locks: ['docker'],
     run: async (requirements, utils) => {
-      const buildDir = requirements[`service-${name}-build-dir`];
+      const appDir = requirements[`service-${name}-installed-app-dir`];
       const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];
       const tag = `${cfg.docker.repositoryPrefix}${name}:${headRef}`;
 
@@ -126,19 +112,18 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
       // build a tarfile containing the build directory, Dockerfile, and ancillary files
       utils.step({title: 'Create Docker-Build Tarball'});
 
-      // TODO: maybe this file should be in the build spec???
-      const dockerfile = TOOLS_UI_DOCKERFILE_TEMPLATE({});
+      const dockerfile = TOOLS_UI_DOCKERFILE_TEMPLATE({nodeImage});
+      const nginxConf = fs.readFileSync(path.join(__dirname, 'tools-ui-nginx-site.conf'));
 
-      const tarball = tar.pack(buildDir, {
+      const tarball = tar.pack(appDir, {
         finalize: false,
         map: header => {
-          header.name = `build/${header.name}`;
+          header.name = `app/${header.name}`;
           return header;
         },
         finish: pack => {
-          pack.entry({name: 'Dockerfile'},
-            TOOLS_UI_DOCKERFILE_TEMPLATE({}));
-          pack.entry({name: 'nginx-site.conf'}, fs.readFileSync(path.join(__dirname, 'tools-ui-nginx-site.conf')));
+          pack.entry({name: 'Dockerfile'}, dockerfile);
+          pack.entry({name: 'nginx-site.conf'}, nginxConf);
           pack.finalize();
         },
       });
@@ -156,5 +141,4 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
       return provides;
     },
   });
-
 };
