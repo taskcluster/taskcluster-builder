@@ -7,8 +7,9 @@ const doT = require('dot');
 const {quote} = require('shell-quote');
 const tar = require('tar-fs');
 const copy = require('recursive-copy');
+const Stamp = require('../stamp');
 const {gitClone, dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
-  dirStamped, stampDir, ensureDockerImage, ensureTask} = require('../utils');
+  ensureDockerImage, ensureTask} = require('../utils');
 
 doT.templateSettings.strip = false;
 const ENTRYPOINT_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'entrypoint.dot')));
@@ -29,18 +30,25 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
     requires: [],
     provides: [
       `repo-${buildpackName}-dir`,
+      `repo-${buildpackName}-exact-source`,
+      `repo-${buildpackName}-stamp`,
     ],
     run: async (requirements, utils) => {
       const repoDir = path.join(baseDir, `repo-${buildpackName}-dir`);
-      const provides = {
-        [`repo-${buildpackName}-dir`]: repoDir,
-      };
-
       const {exactRev, changed} = await gitClone({
         dir: repoDir,
         url: buildpackUrl,
         utils,
       });
+
+      const [repoUrl] = buildpackUrl.split('#');
+      const stamp = new Stamp({step: 'buildpack-clone', version: 1},
+        `${repoUrl}#${exactRev}`);
+      const provides = {
+        [`repo-${buildpackName}-dir`]: repoDir,
+        [`repo-${buildpackName}-exact-source`]: `${repoUrl}#${exactRev}`,
+        [`repo-${buildpackName}-stamp`]: stamp,
+      };
 
       if (changed) {
         return provides;
@@ -55,24 +63,32 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
     requires: [
       `repo-${name}-dir`,
       `repo-${name}-exact-source`,
+      `repo-${name}-stamp`,
       `docker-image-${buildImage}`,
       `repo-${buildpackName}-dir`,
+      `repo-${buildpackName}-stamp`,
     ],
     provides: [
       `service-${name}-built-app-dir`,
+      `service-${name}-stamp`,
     ],
     locks: ['docker'],
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
       const bpDir = requirements[`repo-${buildpackName}-dir`];
-      const provides = {
-        [`service-${name}-built-app-dir`]: appDir,
-      };
       const revision = requirements[`repo-${name}-exact-source`].split('#')[1];
 
+      const stamp = new Stamp({step: 'service-compile', version: 1},
+        requirements[`repo-${buildpackName}-stamp`],
+        requirements[`repo-${name}-stamp`]);
+      const provides = {
+        [`service-${name}-built-app-dir`]: appDir,
+        [`service-${name}-stamp`]: stamp,
+      };
+
       // if we've already built this appDir with this revision, we're done.
-      if (dirStamped({dir: appDir, sources: requirements[`repo-${name}-exact-source`]})) {
+      if (stamp.dirStamped(appDir)) {
         return utils.skip({provides});
       } else {
         await rimraf(appDir);
@@ -146,7 +162,7 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
       const entrypoint = ENTRYPOINT_TEMPLATE({procs});
       fs.writeFileSync(path.join(appDir, 'entrypoint'), entrypoint, {mode: 0o777});
 
-      stampDir({dir: appDir, sources: requirements[`repo-${name}-exact-source`]});
+      stamp.stampDir(appDir);
       return provides;
     },
   });
@@ -154,8 +170,8 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
   tasks.push({
     title: `Service ${name} - Build Image`,
     requires: [
-      `repo-${name}-exact-source`,
       `service-${name}-built-app-dir`,
+      `service-${name}-stamp`,
       `docker-image-${stackImage}`,
     ],
     provides: [
@@ -165,8 +181,8 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
     locks: ['docker'],
     run: async (requirements, utils) => {
       const appDir = requirements[`service-${name}-built-app-dir`];
-      const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];
-      const tag = `${cfg.docker.repositoryPrefix}${name}:${headRef}`;
+      const serviceStamp = requirements[`service-${name}-stamp`];
+      const tag = `${cfg.docker.repositoryPrefix}${name}:${serviceStamp.hash()}`;
 
       utils.step({title: 'Check for Existing Images'});
 
@@ -217,10 +233,12 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
       requires: [
         `repo-${name}-exact-source`,
         `service-${name}-built-app-dir`,
+        `service-${name}-stamp`,
         `docker-image-${stackImage}`,
       ],
       provides: [
         `docs-${name}-dir`,
+        `docs-${name}-stamp`,
       ],
       locks: ['docker'],
       run: async (requirements, utils) => {
@@ -228,12 +246,16 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
         // note that docs directory paths must have this form (${basedir}/docs is
         // mounted in docker images)
         const docsDir = path.join(baseDir, 'docs', name);
+
+        const stamp = new Stamp({step: 'service-docs', version: 1},
+          requirements[`service-${name}-stamp`]);
         const provides = {
           [`docs-${name}-dir`]: docsDir,
+          [`docs-${name}-stamp`]: stamp,
         };
 
         // if we've already built this docsDir with this revision, we're done.
-        if (dirStamped({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]})) {
+        if (stamp.dirStamped(docsDir)) {
           return utils.skip({provides});
         }
         await rimraf(docsDir);
@@ -256,7 +278,7 @@ exports.herokuBuildpackTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, re
           baseDir,
         });
 
-        stampDir({dir: docsDir, sources: requirements[`repo-${name}-exact-source`]});
+        stamp.stampDir(docsDir);
         return provides;
       },
     });

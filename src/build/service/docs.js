@@ -7,8 +7,9 @@ const mkdirp = util.promisify(require('mkdirp'));
 const doT = require('dot');
 const tar = require('tar-fs');
 const copy = require('recursive-copy');
+const Stamp = require('../stamp');
 const {dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
-  dirStamped, stampDir, ensureDockerImage} = require('../utils');
+  ensureDockerImage} = require('../utils');
 
 doT.templateSettings.strip = false;
 const DOCS_DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'docs-dockerfile.dot')));
@@ -26,13 +27,14 @@ exports.docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, w
     requires: [
       `docker-image-${nodeImage}`,
       `docker-image-${nginxImage}`,
-      `repo-${name}-exact-source`,
+      `repo-${name}-stamp`,
       `repo-${name}-dir`,
       ...docNames.map(name => `docs-${name}-dir`),
-      ...docNames.map(name => `repo-${name}-exact-source`),
+      ...docNames.map(name => `docs-${name}-stamp`),
     ],
     provides: [
       `service-${name}-built-app-dir`,
+      `service-${name}-stamp`,
       `service-${name}-static-dir`, // result of `gulp build-static`
     ],
     locks: ['docker'],
@@ -41,13 +43,18 @@ exports.docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, w
       const appDir = path.join(workDir, 'app');
       const cacheDir = path.join(workDir, 'cache');
       const staticDir = path.join(appDir, 'static');
-      const sources = [name, ...docNames].map(name => requirements[`repo-${name}-exact-source`]);
+      const stamp = new Stamp({step: 'docs-build', version: 1},
+        // our own repo
+        requirements[`repo-${name}-stamp`],
+        // all of the input docs
+        ...docNames.map(n => requirements[`docs-${n}-stamp`]));
       const provides = {
         [`service-${name}-built-app-dir`]: appDir,
+        [`service-${name}-stamp`]: stamp,
         [`service-${name}-static-dir`]: staticDir,
       };
 
-      if (dirStamped({dir: appDir, sources})) {
+      if (stamp.dirStamped(appDir)) {
         return utils.skip({provides});
       }
       await rimraf(appDir);
@@ -104,7 +111,7 @@ exports.docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, w
         baseDir,
       });
 
-      stampDir({dir: appDir, sources});
+      stamp.stampDir(appDir);
       return provides;
     },
   });
@@ -112,7 +119,7 @@ exports.docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, w
   tasks.push({
     title: `Service ${name} - Build Image`,
     requires: [
-      `repo-${name}-exact-source`,
+      `service-${name}-stamp`,
       `service-${name}-static-dir`,
     ],
     provides: [
@@ -122,8 +129,8 @@ exports.docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, w
     locks: ['docker'],
     run: async (requirements, utils) => {
       const staticDir = requirements[`service-${name}-static-dir`];
-      const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];
-      const tag = `${cfg.docker.repositoryPrefix}${name}:${headRef}`;
+      const serviceStamp = requirements[`service-${name}-stamp`];
+      const tag = `${cfg.docker.repositoryPrefix}${name}:${serviceStamp.hash()}`;
 
       utils.step({title: 'Check for Existing Images'});
 

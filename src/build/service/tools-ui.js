@@ -7,8 +7,9 @@ const mkdirp = util.promisify(require('mkdirp'));
 const doT = require('dot');
 const tar = require('tar-fs');
 const copy = require('recursive-copy');
+const Stamp = require('../stamp');
 const {dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
-  dirStamped, stampDir, ensureDockerImage} = require('../utils');
+  ensureDockerImage} = require('../utils');
 
 doT.templateSettings.strip = false;
 const TOOLS_UI_DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'tools-ui-dockerfile.dot')));
@@ -21,23 +22,27 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
     title: `Service ${name} - Yarn Install`,
     requires: [
       `docker-image-${nodeImage}`,
-      `repo-${name}-exact-source`,
+      `repo-${name}-stamp`,
       `repo-${name}-dir`,
     ],
     provides: [
       `service-${name}-installed-app-dir`,
+      `service-${name}-stamp`,
     ],
     locks: ['docker'],
     run: async (requirements, utils) => {
       const repoDir = requirements[`repo-${name}-dir`];
       const appDir = path.join(workDir, 'app');
       const cacheDir = path.join(workDir, 'cache');
-      const sources = [requirements[`repo-${name}-exact-source`]];
+
+      const stamp = new Stamp({step: 'service-compile', version: 1},
+        requirements[`repo-${name}-stamp`]);
       const provides = {
         [`service-${name}-installed-app-dir`]: appDir,
+        [`service-${name}-stamp`]: stamp,
       };
 
-      if (dirStamped({dir: appDir, sources})) {
+      if (stamp.dirStamped(appDir)) {
         return utils.skip({provides});
       }
       await rimraf(appDir);
@@ -69,7 +74,7 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
       // configuration.  Instead, the Dockerfile is set up to run this at
       // deployment time.
 
-      stampDir({dir: appDir, sources});
+      stamp.stampDir(appDir);
       return provides;
     },
   });
@@ -77,7 +82,7 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
   tasks.push({
     title: `Service ${name} - Build Image`,
     requires: [
-      `repo-${name}-exact-source`,
+      `service-${name}-stamp`,
       `service-${name}-installed-app-dir`,
     ],
     provides: [
@@ -87,8 +92,8 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
     locks: ['docker'],
     run: async (requirements, utils) => {
       const appDir = requirements[`service-${name}-installed-app-dir`];
-      const headRef = requirements[`repo-${name}-exact-source`].split('#')[1];
-      const tag = `${cfg.docker.repositoryPrefix}${name}:${headRef}`;
+      const serviceStamp = requirements[`service-${name}-stamp`];
+      const tag = `${cfg.docker.repositoryPrefix}${name}:${serviceStamp.hash()}`;
 
       utils.step({title: 'Check for Existing Images'});
 

@@ -12,35 +12,6 @@ const got = require('got');
 const {spawn} = require('child_process'); 
 
 /**
- * Determine if the given directory is stamped with the given sources.
- */
-exports.dirStamped = ({dir, sources}) => {
-  if (!fs.existsSync(dir)) {
-    return false;
-  }
-
-  const sourcesFile = path.join(dir, '.sources.json');
-  if (!fs.existsSync(sourcesFile)) {
-    return false;
-  }
-
-  const foundSources = JSON.parse(fs.readFileSync(sourcesFile, {encoding: 'utf-8'}));
-  if (!_.isEqual(foundSources, sources)) {
-    return false;
-  }
-
-  return true;
-};
-
-/**
- * Stamp a directory as having been created with the given sources
- */
-exports.stampDir = ({dir, sources}) => {
-  const sourcesFile = path.join(dir, '.sources.json');
-  fs.writeFileSync(sourcesFile, JSON.stringify(sources));
-};
-
-/**
  * Perform a git clone
  *
  * - dir -- directory to clone to
