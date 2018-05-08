@@ -9,7 +9,7 @@ const tar = require('tar-fs');
 const copy = require('recursive-copy');
 const Stamp = require('../stamp');
 const {dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
-  ensureDockerImage} = require('../utils');
+  ensureDockerImage, serviceDockerImageTask} = require('../utils');
 
 doT.templateSettings.strip = false;
 const TOOLS_UI_DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'tools-ui-dockerfile.dot')));
@@ -79,48 +79,17 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
     },
   });
 
-  tasks.push({
-    title: `Service ${name} - Build Image`,
+  serviceDockerImageTask({tasks, baseDir, workDir, cfg, name,
     requires: [
-      `service-${name}-stamp`,
       `service-${name}-installed-app-dir`,
+      `docker-image-${nodeImage}`,
     ],
-    provides: [
-      `service-${name}-docker-image`, // docker image tag
-      `service-${name}-image-on-registry`, // true if the image already exists on registry
-    ],
-    locks: ['docker'],
-    run: async (requirements, utils) => {
+    makeTarball: (requirements, utils) => {
       const appDir = requirements[`service-${name}-installed-app-dir`];
-      const serviceStamp = requirements[`service-${name}-stamp`];
-      const tag = `${cfg.docker.repositoryPrefix}${name}:${serviceStamp.hash()}`;
-
-      utils.step({title: 'Check for Existing Images'});
-
-      const imageLocal = (await dockerImages({baseDir}))
-        .some(image => image.RepoTags && image.RepoTags.indexOf(tag) !== -1);
-      const imageOnRegistry = await dockerRegistryCheck({tag});
-
-      const provides = {
-        [`service-${name}-docker-image`]: tag,
-        [`service-${name}-image-on-registry`]: imageOnRegistry,
-      };
-
-      // bail out if we can, pulling the image if it's only available remotely
-      if (!imageLocal && imageOnRegistry) {
-        await dockerPull({image: tag, utils, baseDir});
-        return utils.skip({provides});
-      } else if (imageLocal) {
-        return utils.skip({provides});
-      }
-
-      // build a tarfile containing the build directory, Dockerfile, and ancillary files
-      utils.step({title: 'Create Docker-Build Tarball'});
-
       const dockerfile = TOOLS_UI_DOCKERFILE_TEMPLATE({nodeImage});
       const nginxConf = fs.readFileSync(path.join(__dirname, 'tools-ui-nginx-site.conf'));
 
-      const tarball = tar.pack(appDir, {
+      return tar.pack(appDir, {
         finalize: false,
         map: header => {
           header.name = `app/${header.name}`;
@@ -132,18 +101,6 @@ exports.toolsUiTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository
           pack.finalize();
         },
       });
-
-      utils.step({title: 'Building'});
-
-      await dockerBuild({
-        tarball,
-        logfile: `${workDir}/docker-build.log`,
-        tag,
-        utils,
-        baseDir,
-      });
-
-      return provides;
     },
   });
 };

@@ -9,7 +9,7 @@ const tar = require('tar-fs');
 const copy = require('recursive-copy');
 const Stamp = require('../stamp');
 const {dockerRun, dockerPull, dockerImages, dockerBuild, dockerRegistryCheck,
-  ensureDockerImage} = require('../utils');
+  serviceDockerImageTask, ensureDockerImage} = require('../utils');
 
 doT.templateSettings.strip = false;
 const DOCS_DOCKERFILE_TEMPLATE = doT.template(fs.readFileSync(path.join(__dirname, 'docs-dockerfile.dot')));
@@ -116,67 +116,23 @@ exports.docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, w
     },
   });
 
-  tasks.push({
-    title: `Service ${name} - Build Image`,
+  serviceDockerImageTask({tasks, baseDir, workDir, cfg, name,
     requires: [
-      `service-${name}-stamp`,
       `service-${name}-static-dir`,
+      'docker-image-nginx:alpine',
     ],
-    provides: [
-      `service-${name}-docker-image`, // docker image tag
-      `service-${name}-image-on-registry`, // true if the image already exists on registry
-    ],
-    locks: ['docker'],
-    run: async (requirements, utils) => {
+    makeTarball: (requirements, utils) => {
       const staticDir = requirements[`service-${name}-static-dir`];
-      const serviceStamp = requirements[`service-${name}-stamp`];
-      const tag = `${cfg.docker.repositoryPrefix}${name}:${serviceStamp.hash()}`;
-
-      utils.step({title: 'Check for Existing Images'});
-
-      const imageLocal = (await dockerImages({baseDir}))
-        .some(image => image.RepoTags && image.RepoTags.indexOf(tag) !== -1);
-      const imageOnRegistry = await dockerRegistryCheck({tag});
-
-      const provides = {
-        [`service-${name}-docker-image`]: tag,
-        [`service-${name}-image-on-registry`]: imageOnRegistry,
-      };
-
-      // bail out if we can, pulling the image if it's only available remotely
-      if (!imageLocal && imageOnRegistry) {
-        await dockerPull({image: tag, utils, baseDir});
-        return utils.skip({provides});
-      } else if (imageLocal) {
-        return utils.skip({provides});
-      }
-
-      // build a tarfile containing the build directory, Dockerfile, and ancillary files
-      utils.step({title: 'Create Docker-Build Tarball'});
-
       const dockerfile = DOCS_DOCKERFILE_TEMPLATE({});
 
-      const tarball = tar.pack(staticDir, {
+      return tar.pack(staticDir, {
         finalize: false,
         finish: pack => {
           pack.entry({name: 'Dockerfile'}, dockerfile);
           pack.finalize();
         },
       });
-
-      utils.step({title: 'Building'});
-
-      await dockerBuild({
-        tarball,
-        logfile: `${workDir}/docker-build.log`,
-        tag,
-        utils,
-        baseDir,
-      });
-
-      return provides;
     },
   });
-
 };
 
