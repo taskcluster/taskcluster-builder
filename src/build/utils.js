@@ -341,7 +341,7 @@ exports.serviceDockerImageTask = ({tasks, baseDir, workDir, cfg, name, requires,
     locks: ['docker'],
     run: async (requirements, utils) => {
       const serviceStamp = requirements[`service-${name}-stamp`];
-      const tag = `${cfg.docker.repositoryPrefix}${name}:${serviceStamp.hash()}`;
+      const tag = `${cfg.docker.repositoryPrefix}${name}:SVC-${serviceStamp.hash()}`;
 
       utils.step({title: 'Check for Existing Images'});
 
