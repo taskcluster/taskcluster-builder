@@ -103,7 +103,7 @@ exports.docsTasks = ({tasks, baseDir, spec, cfg, name, cmdOptions, repository, w
         image: nodeImage,
         workingDir: '/app',
         command: ['/app/node_modules/.bin/gulp', 'build-static'],
-        logfile: `${workDir}/yarn-build.log`,
+        logfile: `${workDir}/gulp.log`,
         utils,
         binds: [
           `${appDir}:/app`,
