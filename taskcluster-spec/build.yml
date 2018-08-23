@@ -24,7 +24,7 @@ repositories:
 
 - name: index
   kind: service
-  source: https://github.com/taskcluster/taskcluster-index#master
+  source: https://github.com/taskcluster/taskcluster-index#r14y
   docs: generated
   service:
     buildtype: heroku-buildpack
@@ -69,7 +69,7 @@ repositories:
 
 - name: hooks
   kind: service
-  source: https://github.com/taskcluster/taskcluster-hooks#master
+  source: https://github.com/taskcluster/taskcluster-hooks#r14y
   docs: generated
   service:
     buildtype: heroku-buildpack
