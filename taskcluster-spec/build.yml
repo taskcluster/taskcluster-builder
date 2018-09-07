@@ -24,7 +24,7 @@ repositories:
 
 - name: index
   kind: service
-  source: https://github.com/taskcluster/taskcluster-index#r14y
+  source: https://github.com/taskcluster/taskcluster-index#master
   docs: generated
   service:
     buildtype: heroku-buildpack
@@ -69,7 +69,7 @@ repositories:
 
 - name: hooks
   kind: service
-  source: https://github.com/taskcluster/taskcluster-hooks#r14y
+  source: https://github.com/taskcluster/taskcluster-hooks#master
   docs: generated
   service:
     buildtype: heroku-buildpack
@@ -105,10 +105,8 @@ repositories:
 
 - name: events
   kind: service
-  source: https://github.com/taskcluster/taskcluster-events#r14y
-  docs:
-    tier: core
-    projectName: taskcluster-events
+  source: https://github.com/taskcluster/taskcluster-events#master
+  docs: generated
   service:
     buildtype: heroku-buildpack
     stack: heroku-16
