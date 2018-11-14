@@ -124,10 +124,13 @@ exports.dockerRun = async ({baseDir, logfile, command, env, binds, workingDir, i
     OpenStdin: false,
     StdinOnce: false,
     Tty: false,
-    Binds: [...Binds, ...binds || []],
     Env: [...Env, ...env || []],
     WorkingDir: workingDir,
     Cmd: command,
+    HostConfig: {
+      Binds: [...Binds, ...binds || []],
+      AutoRemove: true,
+    },
     ...otherOpts,
   };
 
