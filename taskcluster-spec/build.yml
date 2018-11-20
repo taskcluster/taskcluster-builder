@@ -133,7 +133,7 @@ repositories:
     projectName: taskcluster-references
   service:
     buildtype: references
-    node: 8
+    node: 10
   source: https://github.com/taskcluster/taskcluster-references#master
 
 # docs/metadata sources that are not compiled into the final product
